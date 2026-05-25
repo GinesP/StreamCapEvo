@@ -41,7 +41,7 @@ packages = [
 
 [tool.poetry.dependencies]
 PySide6 = ">=6.6.0"
-qasync = ">=0.27.0"
+qasync = ">=0.28.0"
 httpx = "^0.28.1"
 screeninfo = "~0.8.1"
 aiofiles = "~24.1.0"
