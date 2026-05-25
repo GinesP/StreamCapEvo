@@ -18,8 +18,8 @@
     "stats": "Estadísticas"
   },
     "home_page": {
-        "app_title": "StreamCap Origin",
-        "welcome": "Bienvenido a StreamCap Origin",
+        "app_title": "StreamCapEvo",
+        "welcome": "Bienvenido a StreamCapEvo",
         "tagline": "Graba cada momento emocionante de la transmisión en vivo",
         "start_recording": "Iniciar Grabación",
         "recording_list": "Lista de Grabaciones",
@@ -598,7 +598,7 @@
         "exit": "Salir del Programa"
     },
     "login_page": {
-        "login_title": "Inicio de Sesión StreamCap Origin",
+        "login_title": "Inicio de Sesión StreamCapEvo",
         "login_subtitle": "Por favor inicie sesión en su cuenta",
         "username": "Nombre de Usuario",
         "password": "Contraseña",

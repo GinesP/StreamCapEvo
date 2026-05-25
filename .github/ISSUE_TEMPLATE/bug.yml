@@ -11,7 +11,7 @@ body:
     attributes:
       label: ⚠️ Check for existing issues
       description: >
-        🔍 [Search existing issues](https://github.com/ihmily/StreamCap/issues?q=is%3Aissue)
+        🔍 [Search existing issues](https://github.com/GinesP/StreamCapEvo/issues?q=is%3Aissue)
         and make sure this problem has not already been reported.
       options:
         - label: I have searched existing issues and found no duplicate.

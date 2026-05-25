@@ -2,10 +2,10 @@
 name = "StreamCap"
 version = "1.1.1"
 description = "Live Stream Recorder"
-authors = [{ name = "Hmily" }]
+authors = [{ name = "GinesP" }]
 license = {text = "Apache-2.0"}
 readme = "README.md"
-url='https://github.com/ihmily/StreamCap'
+url='https://github.com/GinesP/StreamCapEvo'
 requires-python = ">=3.10,<4.0"
 
 dependencies = [
@@ -23,9 +23,9 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/ihmily/StreamCap/wiki"
-Homepage = "https://github.com/ihmily/StreamCap"
-Source = "https://github.com/ihmily/StreamCap"
+Documentation = "https://github.com/GinesP/StreamCapEvo/wiki"
+Homepage = "https://github.com/GinesP/StreamCapEvo"
+Source = "https://github.com/GinesP/StreamCapEvo"
 
 [build-system]
 requires = ["poetry-core>=1.0.0"]

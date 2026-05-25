@@ -11,7 +11,7 @@ body:
     attributes:
       label: ⚠️ Search for similar issues
       description: >
-        🔍 [Search existing issues](https://github.com/ihmily/StreamCap/issues?q=is%3Aissue) with relevant keywords to avoid duplicates.
+        🔍 [Search existing issues](https://github.com/GinesP/StreamCapEvo/issues?q=is%3Aissue) with relevant keywords to avoid duplicates.
       options:
         - label: I have searched existing issues and found no similar request.
           required: true

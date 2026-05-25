@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
 
     MIN_WIDTH = 950
     MIN_HEIGHT = 600
-    WINDOW_TITLE = "StreamCap Origin"
+    WINDOW_TITLE = "StreamCapEvo"
     SIDEBAR_COLLAPSE_BREAKPOINT = 1024
 
     def __init__(self, app_context):

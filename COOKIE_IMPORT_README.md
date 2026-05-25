@@ -1,10 +1,10 @@
-# Cookie Import Tools for StreamCapOrigin
+# Cookie Import Tools for StreamCapEvo
 
-This directory contains tools to import browser-exported cookies into the StreamCapOrigin application.
+This directory contains tools to import browser-exported cookies into the StreamCapEvo application.
 
 ## 📋 Overview
 
-StreamCapOrigin requires TikTok cookies to function properly. These tools help you:
+StreamCapEvo requires TikTok cookies to function properly. These tools help you:
 - Convert browser-exported JSON cookies to the application's format
 - Automatically backup existing configurations
 - Validate cookie formats before import
@@ -81,13 +81,13 @@ C:\\Users\\Test\\Videos\\Disco\\R\\www.tiktok.com.cookies.json
 
 ### Target Location (Application Config)
 ```
-E:\\dev\\StreamCapOrigin\\config\\cookies.json
+E:\\dev\\StreamCapEvo\\config\\cookies.json
 ```
 
 ### Backup Location
 Backups are automatically created with timestamp:
 ```
-E:\\dev\\StreamCapOrigin\\config\\cookies.json.backup_20250826_195012
+E:\\dev\\StreamCapEvo\\config\\cookies.json.backup_20250826_195012
 ```
 
 ## 🔧 Advanced Usage
@@ -192,7 +192,7 @@ If you encounter issues:
 
 ### File Structure
 ```
-StreamCapOrigin/
+StreamCapEvo/
 ├── import_cookies.py              # Simple import script
 ├── import_cookies.bat            # Windows batch wrapper
 ├── COOKIE_IMPORT_README.md       # This documentation

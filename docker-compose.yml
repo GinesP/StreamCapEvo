@@ -1,7 +1,7 @@
 
 services:
   streamcap:
-    image: ihmily/streamcap
+      image: ginesp/streamcapevo
     tty: true
     ports:
       - "${PORT:-6006}:${PORT:-6006}"
@@ -22,7 +22,7 @@ services:
       - streamcap-network
 
   video_api:
-      image: ihmily/streamcap
+    image: ginesp/streamcapevo
       command: python -m app.api.video_stream_service
       ports:
         - "${VIDEO_API_PORT:-6007}:${VIDEO_API_PORT:-6007}"

@@ -63,7 +63,7 @@ class UpdateChecker:
     def _load_update_config() -> UpdateConfig:
         auto_check = os.getenv("AUTO_CHECK_UPDATE", "false").lower() == "true"
         update_source = os.getenv("UPDATE_SOURCE", "both").lower()
-        github_repo = os.getenv("GITHUB_REPO", "ihmily/StreamCap")
+        github_repo = os.getenv("GITHUB_REPO", "GinesP/StreamCapEvo")
         custom_api = os.getenv("CUSTOM_UPDATE_API", "")
         check_interval = int(os.getenv("UPDATE_CHECK_INTERVAL", "86400"))
         
@@ -269,7 +269,7 @@ class UpdateChecker:
         import platform
         import webbrowser
 
-        url = update_info.get("download_url", "https://github.com/ihmily/StreamCap/releases/latest")
+        url = update_info.get("download_url", "https://github.com/GinesP/StreamCapEvo/releases/latest")
         
         download_urls = update_info.get("download_urls", {})
         if download_urls:

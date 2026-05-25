@@ -12,7 +12,7 @@ body:
     attributes:
       label: ⚠️ Search for similar questions
       description: >
-        🔍 [Search existing issues](https://github.com/ihmily/StreamCap/issues?q=is%3Aissue) with relevant keywords to see whether someone has already asked this.
+        🔍 [Search existing issues](https://github.com/GinesP/StreamCapEvo/issues?q=is%3Aissue) with relevant keywords to see whether someone has already asked this.
       options:
         - label: I have searched existing issues and found no similar question.
           required: true

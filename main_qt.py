@@ -60,8 +60,8 @@ def main():
 
     # Create the Qt Application
     app = QApplication.instance() or QApplication(sys.argv)
-    app.setApplicationName("StreamCap Origin")
-    app.setApplicationDisplayName("StreamCap Origin")
+    app.setApplicationName("StreamCapEvo")
+    app.setApplicationDisplayName("StreamCapEvo")
     load_app_fonts()
 
     # Set the application icon globally. Prefer the multi-resolution ICO on Windows

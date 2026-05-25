@@ -462,7 +462,7 @@ class QtSettingsView(QWidget):
         self.notif_enabled.setChecked(s.get_config_value("system_notification_enabled", False))
         self.start_notif.setChecked(s.get_config_value("stream_start_notification_enabled", False))
         self.end_notif.setChecked(s.get_config_value("stream_end_notification_enabled", False))
-        self.notif_title.setText(s.get_config_value("custom_notification_title", "StreamCap Origin"))
+        self.notif_title.setText(s.get_config_value("custom_notification_title", "StreamCapEvo"))
         
         # Telegram & Webhook
         self.tg_token.setText(s.get_config_value("telegram_bot_token", ""))

@@ -1,22 +1,22 @@
 <div align="center">
-  <img src="./assets/images/logo.svg" alt="StreamCap Origin" />
+  <img src="./assets/images/logo.svg" alt="StreamCapEvo" />
 </div>
 <p align="center">
   <img alt="Python version" src="https://img.shields.io/badge/python-3.10%2B-blue.svg">
-  <a href="https://github.com/GinesP/StreamCapOrigin">
+  <a href="https://github.com/GinesP/StreamCapEvo">
       <img alt="Supported Platforms" src="https://img.shields.io/badge/Platforms-Win%20%7C%20Mac%20%7C%20Linux-6B5BFF.svg"></a>
-  <a href="https://hub.docker.com/r/GinesP/StreamCapOrigin/tags">
-      <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/ihmily/streamcap?label=Docker%20Pulls&color=2496ED&logo=docker"></a>
-  <a href="https://github.com/GinesP/StreamCapOrigin/releases/latest">
-      <img alt="Latest Release" src="https://img.shields.io/github/v/release/GinesP/StreamCapOrigin"></a>
-  <a href="https://github.com/GinesP/StreamCapOrigin/releases/latest">
-      <img alt="Downloads" src="https://img.shields.io/github/downloads/GinesP/StreamCapOrigin/total"></a>
+  <a href="https://hub.docker.com/r/GinesP/StreamCapEvo/tags">
+      <img alt="Docker Pulls" src="https://img.shields.io/docker/pulls/GinesP/StreamCapEvo?label=Docker%20Pulls&color=2496ED&logo=docker"></a>
+  <a href="https://github.com/GinesP/StreamCapEvo/releases/latest">
+      <img alt="Latest Release" src="https://img.shields.io/github/v/release/GinesP/StreamCapEvo"></a>
+  <a href="https://github.com/GinesP/StreamCapEvo/releases/latest">
+      <img alt="Downloads" src="https://img.shields.io/github/downloads/GinesP/StreamCapEvo/total"></a>
 </p>
 <div align="center">
   Español / <a href="./README_EN.md">English</a>
 </div><br>
 
-# StreamCap Origin
+# StreamCapEvo
 
 StreamCap es un cliente multiplataforma para grabar directos, basado en FFmpeg y StreamGet. Permite monitorizar, grabar y gestionar streams de más de 40 plataformas con soporte para grabación por lotes, comprobación periódica, horarios de monitorización y transcodificación automática.
 
@@ -48,7 +48,7 @@ Requisitos mínimos:
 - Dependencias Python instaladas desde `requirements.txt`.
 
 ```bash
-git clone https://github.com/ihmily/StreamCap.git
+git clone https://github.com/GinesP/StreamCapEvo.git
 cd StreamCap
 python -m venv .venv
 .venv\Scripts\activate
@@ -111,7 +111,7 @@ https://www.youtube.com/watch?v=5KpV0y_hNXQ
 - Documentación técnica de inteligencia: `docs/INTELLIGENCE_ES.md`.
 - Distribución Windows: `docs/WINDOWS_DISTRIBUTION.md`.
 - README en inglés: `README_EN.md`.
-- Wiki del proyecto original: <https://github.com/ihmily/StreamCap/wiki>.
+- Wiki del proyecto: <https://github.com/GinesP/StreamCapEvo/wiki>.
 
 ## Licencia
 

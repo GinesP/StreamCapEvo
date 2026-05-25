@@ -157,7 +157,7 @@ class QtAboutView(QWidget):
         
         # Dev Info
         dev_col = QVBoxLayout()
-        self.dev_title = QLabel("Hmily")
+        self.dev_title = QLabel("GinesP")
         self.dev_title.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {theme_manager.get_color('text')};")
         dev_col.addWidget(self.dev_title)
         
@@ -173,11 +173,11 @@ class QtAboutView(QWidget):
         btns_col = QVBoxLayout()
         
         btn_updates = QPushButton("📦 " + self._.get("view_update", "Releases"))
-        btn_updates.clicked.connect(lambda: QDesktopServices.openUrl("https://github.com/ihmily/StreamCap/releases"))
+        btn_updates.clicked.connect(lambda: QDesktopServices.openUrl("https://github.com/GinesP/StreamCapEvo/releases"))
         btns_col.addWidget(btn_updates)
         
         btn_docs = QPushButton("📄 " + self._.get("view_docs", "Wiki / Docs"))
-        btn_docs.clicked.connect(lambda: QDesktopServices.openUrl("https://github.com/ihmily/StreamCap/wiki"))
+        btn_docs.clicked.connect(lambda: QDesktopServices.openUrl("https://github.com/GinesP/StreamCapEvo/wiki"))
         btns_col.addWidget(btn_docs)
         
         btn_check = QPushButton("🔄 " + self.app.language_manager.language.get("update", {}).get("check_update", "Check Updates"))
