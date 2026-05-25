@@ -1,5 +1,5 @@
 """
-Qt Add Stream Dialog for StreamCap — Expanded Version.
+Qt Add Stream Dialog for StreamCapEvo — Expanded Version.
 """
 
 import ctypes

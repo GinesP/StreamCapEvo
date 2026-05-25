@@ -1,5 +1,5 @@
 """
-Qt Recordings View for StreamCap.
+Qt Recordings View for StreamCapEvo.
 
 Migrates the Flet GridView of recording cards to a Qt layout.
 """

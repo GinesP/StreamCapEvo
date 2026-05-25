@@ -787,7 +787,7 @@ class QtHomeView(QWidget):
         logo = QLabel()
         logo.setFixedSize(56, 56)
         logo.setStyleSheet("background: transparent;")
-        logo_path = Path(__file__).resolve().parents[3] / "assets" / "icons" / "streamcap_origin_app_icon.png"
+        logo_path = Path(__file__).resolve().parents[3] / "assets" / "icons" / "streamcapevo_origin_app_icon.png"
         if logo_path.exists():
             pixmap = QPixmap(str(logo_path)).scaled(
                 56,

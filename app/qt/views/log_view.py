@@ -1,5 +1,5 @@
 """
-Qt Log View for StreamCap — full-featured real-time log console.
+Qt Log View for StreamCapEvo — full-featured real-time log console.
 
 Features:
   • Colour-coded log levels (DEBUG / INFO / SUCCESS / WARNING / ERROR / RETRY / STREAM)

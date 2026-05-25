@@ -1,0 +1,62 @@
+# openspec/config.yaml — StreamCapEvo
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.10+ / PySide6 Qt6 desktop app, async with qasync/httpx,
+  streamget recording engine, SQLite + JSON persistence, Poetry build.
+  Architecture: Clean-ish layered — qt/ (views, components, dialogs), core/ (models,
+  recording, predictor), utils/, api/, messages/, events via event_bus.
+  Legacy migration in progress from Flet to Qt (PySide6).
+  Testing: unittest (stdlib), ruff linter+formatter, no type checker, no coverage
+  tool, no E2E framework currently.
+  Style: PEP 8 via ruff (line-length 120), double quotes, ruff format.
+
+strict_tdd: true
+
+testing:
+  runner:
+    command: python -m unittest discover
+    framework: unittest
+  coverage:
+    available: false
+    command: ""
+  quality:
+    linter:
+      available: true
+      command: ruff check app --config .ruff.toml
+    type_checker:
+      available: false
+      command: ""
+    formatter:
+      available: true
+      command: ruff format --check --config .ruff.toml
+  layers:
+    unit: true
+    integration: true
+    e2e: false
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes
+    - Keep scope constrained; prefer incremental changes
+  specs:
+    - Use Given/When/Then for scenarios
+    - Use RFC 2119 keywords (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Document architecture decisions with rationale
+    - Use sequence diagrams for complex async flows
+  tasks:
+    - Group by phase, use hierarchical numbering
+    - Keep tasks completable in one session
+    - Each task must have a verification step
+  apply:
+    - Follow existing code patterns (PySide6 Qt patterns, async with qasync)
+    - Preserve existing project structure and conventions (see AGENTS.md)
+    tdd: true
+    test_command: python -m unittest discover
+  verify:
+    test_command: python -m unittest discover
+    build_command: python main_qt.py
+    coverage_threshold: 0
+  archive:
+    - Warn before merging destructive deltas

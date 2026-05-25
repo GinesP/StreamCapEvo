@@ -1,5 +1,5 @@
 """
-Qt Settings View for StreamCap.
+Qt Settings View for StreamCapEvo.
 
 Migrates the complex Flet settings page to a modern Qt layout.
 Uses SettingsLogic for framework-agnostic data persistence.
@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 
 from app.utils.logger import logger
 from app.utils.i18n import tr
+from app.core.data_import.import_engine import ImportEngine
 
 
 class SettingsGroup(QGroupBox):
@@ -88,6 +89,7 @@ class QtSettingsView(QWidget):
         self.tabs.addTab(self._create_push_tab(), self._l.get("push_notifications", "Notifications"))
         self.tabs.addTab(self._create_cookies_tab(), self._l.get("cookies_settings", "Cookies"))
         self.tabs.addTab(self._create_accounts_tab(), self._l.get("accounts_settings", "Accounts"))
+        self.tabs.addTab(self._create_data_tab(), self._l.get("data_settings", "Data"))
         
         self.title_lbl.setText(self.language.get("sidebar", {}).get("settings", "Settings"))
         self.restore_btn.setText(self._l.get("restore_defaults", "Restore Defaults"))
@@ -131,6 +133,9 @@ class QtSettingsView(QWidget):
         
         # 4. Accounts Tab
         self.tabs.addTab(self._create_accounts_tab(), self._l.get("accounts_settings", "Accounts"))
+        
+        # 5. Data Tab
+        self.tabs.addTab(self._create_data_tab(), self._l.get("data_settings", "Data"))
         
         main_layout.addWidget(self.tabs)
 
@@ -406,6 +411,129 @@ class QtSettingsView(QWidget):
             
         layout.addWidget(acc_group)
         return self._create_scroll_wrapper(content)
+
+    def _create_data_tab(self):
+        """Create the Data tab for importing from original StreamCap."""
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setSpacing(25)
+        
+        # Import Group
+        import_group = SettingsGroup(
+            self._l.get("data_import_settings", "Data Import"),
+            self._l.get("data_import_description", "Import data from original StreamCap (optional, one-time)")
+        )
+        
+        # Status label
+        self.import_status_label = QLabel(self._l.get("import_status_checking", "Checking for StreamCap data..."))
+        self.import_status_label.setWordWrap(True)
+        self.import_status_label.setStyleSheet("font-size: 12px; color: #666;")
+        import_group.layout.addWidget(self.import_status_label)
+        
+        # Import button
+        self.import_btn = QPushButton(self._l.get("import_from_streamcap", "Import from StreamCap"))
+        self.import_btn.setMinimumWidth(200)
+        self.import_btn.clicked.connect(self._on_import_clicked)
+        import_group.layout.addWidget(self.import_btn)
+        
+        # Result label
+        self.import_result_label = QLabel("")
+        self.import_result_label.setWordWrap(True)
+        self.import_result_label.setStyleSheet("font-size: 11px; margin-top: 10px;")
+        import_group.layout.addWidget(self.import_result_label)
+        
+        layout.addWidget(import_group)
+        
+        # Check import status on creation
+        self._check_import_status()
+        
+        return self._create_scroll_wrapper(content)
+
+    def _check_import_status(self):
+        """Check if import is available and update UI accordingly."""
+        import os
+        import sys
+        
+        # Determine source and destination paths
+        if sys.platform == "win32":
+            local_app_data = os.environ.get("LOCALAPPDATA", "")
+            source_path = os.path.join(local_app_data, "StreamCap")
+            dest_config = os.path.join(local_app_data, "StreamCapEvo", "config")
+        else:
+            # Non-Windows: import not supported
+            self.import_btn.setEnabled(False)
+            self.import_status_label.setText(self._l.get("import_not_available", "Import not available on this platform"))
+            return
+        
+        # Check if already imported
+        user_config = self.settings.user_config
+        if user_config.get("import_completed"):
+            self.import_btn.setEnabled(False)
+            self.import_btn.setText(self._l.get("import_completed", "Import Completed"))
+            self.import_status_label.setText(self._l.get("import_already_done", "Data has already been imported"))
+            return
+        
+        # Check if source data exists
+        engine = ImportEngine(source_path, dest_config)
+        if not engine.has_importable_data():
+            self.import_btn.setEnabled(False)
+            self.import_status_label.setText(self._l.get("import_no_data_found", "No StreamCap data found to import"))
+            return
+        
+        # Check if StreamCap is running
+        if engine.is_source_running():
+            self.import_btn.setEnabled(False)
+            self.import_status_label.setText(self._l.get("import_streamcap_running", "Please close StreamCap before importing"))
+            return
+        
+        # Import is available
+        self.import_btn.setEnabled(True)
+        self.import_status_label.setText(self._l.get("import_ready", "StreamCap data detected. Click to import."))
+
+    def _on_import_clicked(self):
+        """Handle the import button click."""
+        import os
+        import sys
+        
+        if sys.platform != "win32":
+            return
+        
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        source_path = os.path.join(local_app_data, "StreamCap")
+        dest_config = os.path.join(local_app_data, "StreamCapEvo", "config")
+        
+        engine = ImportEngine(source_path, dest_config)
+        
+        # Perform import
+        result = engine.import_all()
+        
+        if result.success:
+            # Mark import as completed
+            self.app.event_bus.run_task(self.settings.update_setting, "import_completed", True)
+            
+            # Update UI
+            self.import_btn.setEnabled(False)
+            self.import_btn.setText(self._l.get("import_completed", "Import Completed"))
+            
+            files_msg = ", ".join(result.files_copied)
+            self.import_result_label.setText(
+                self._l.get("import_success", "Successfully imported: {files}").format(files=files_msg)
+            )
+            self.import_result_label.setStyleSheet("font-size: 11px; color: #28a745; margin-top: 10px;")
+            
+            if hasattr(self.app.main_window, "show_toast"):
+                self.app.main_window.show_toast(
+                    self._l.get("import_toast_success", "Data imported successfully"), "success"
+                )
+        else:
+            # Show errors
+            error_msg = "; ".join(result.errors) if result.errors else self._l.get("import_failed", "Import failed")
+            self.import_result_label.setText(error_msg)
+            self.import_result_label.setStyleSheet("font-size: 11px; color: #dc3545; margin-top: 10px;")
+            
+            if hasattr(self.app.main_window, "show_toast"):
+                self.app.main_window.show_toast(error_msg, "error")
 
     def _on_browse_clicked(self):
         from PySide6.QtWidgets import QFileDialog

@@ -1,5 +1,5 @@
 """
-Qt Recording Card — StreamCap.
+Qt Recording Card — StreamCapEvo.
 
 Architecture:
   ┌─────────────────────────────────────────────────────────────────────┐

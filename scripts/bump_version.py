@@ -1,4 +1,4 @@
-"""Synchronize StreamCap release versions.
+"""Synchronize StreamCapEvo release versions.
 
 pyproject.toml is the technical source of truth. This helper keeps the
 user-facing release metadata in config/version.json aligned with it.
@@ -187,7 +187,7 @@ def run_check() -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Bump or validate StreamCap version metadata.")
+    parser = argparse.ArgumentParser(description="Bump or validate StreamCapEvo version metadata.")
     actions = parser.add_mutually_exclusive_group(required=True)
     actions.add_argument("--patch", action="store_true", help="Increment only the SemVer patch digit.")
     actions.add_argument("--set", metavar="X.Y.Z", help="Set an explicit SemVer version.")

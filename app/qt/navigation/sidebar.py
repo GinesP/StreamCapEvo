@@ -1,5 +1,5 @@
 """
-Qt Sidebar navigation for StreamCap.
+Qt Sidebar navigation for StreamCapEvo.
 
 Replaces the Flet NavigationSidebar / LeftNavigationMenu with a
 PySide6 implementation using QPushButtons inside a QVBoxLayout.
@@ -239,7 +239,7 @@ class Sidebar(QFrame):
         title_layout.setContentsMargins(0, 0, 0, 0)
         title_layout.setSpacing(0)
 
-        self.title_lbl = QLabel("StreamCap")
+        self.title_lbl = QLabel("StreamCapEvo")
         self.title_lbl.setProperty("class", "heading")
         self.title_lbl.setStyleSheet(
             f'font-family: "{DISPLAY_FONT_FAMILY}"; font-size: 18px; font-weight: 700; color: {theme_manager.get_color("accent")}; background: transparent;'

@@ -1,5 +1,5 @@
 """
-Qt Premium Confirmation Dialog — StreamCap.
+Qt Premium Confirmation Dialog — StreamCapEvo.
 A styled dialog for important confirmations (delete, exit, etc.).
 """
 

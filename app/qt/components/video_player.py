@@ -1,5 +1,5 @@
 """
-Qt Video Player for StreamCap.
+Qt Video Player for StreamCapEvo.
 
 Plays recorded videos and live stream previews using QtMultimedia.
 """

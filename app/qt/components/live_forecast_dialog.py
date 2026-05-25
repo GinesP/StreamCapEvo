@@ -1,5 +1,5 @@
 """
-Qt Manual Live Forecast Dialog — StreamCap.
+Qt Manual Live Forecast Dialog — StreamCapEvo.
 Displays on-demand forecast of upcoming live streams.
 """
 

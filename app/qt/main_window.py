@@ -1,5 +1,5 @@
 """
-Main Qt window for StreamCap.
+Main Qt window for StreamCapEvo.
 
 This is the Qt equivalent of main.py + app_manager.py.
 It provides the application shell: sidebar + content area.

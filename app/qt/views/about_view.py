@@ -1,5 +1,5 @@
 """
-Qt About View for StreamCap.
+Qt About View for StreamCapEvo.
 
 Displays project information, version updates, license, and developer details.
 """

@@ -1,5 +1,5 @@
 """
-QtApp: Management class for the Qt version of StreamCap.
+QtApp: Management class for the Qt version of StreamCapEvo.
 
 Mirrors App in app_manager.py but integrates with PySide6.
 Handles core logic initialization and links it to the Qt UI.

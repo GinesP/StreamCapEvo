@@ -1,1 +1,1 @@
-# Qt-based UI for StreamCap
+# Qt-based UI for StreamCapEvo

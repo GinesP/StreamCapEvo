@@ -1,5 +1,5 @@
 """
-Qt ThemeManager for StreamCap — Elite Level 10.
+Qt ThemeManager for StreamCapEvo — Elite Level 10.
 
 Implements the reactive Data-Driven JSON theme architecture:
 - ThemeManager watches theme.json via QFileSystemWatcher (hot-reload)
@@ -147,11 +147,12 @@ ACCENT_COLORS: dict[str, str] = {
 
 # ── Helper ───────────────────────────────────────────────────────────────────
 
-_THEME_PROFILE_ENV = "STREAMCAP_THEME_PROFILE"
+_THEME_PROFILE_ENV = "STREAMCAPEVO_THEME_PROFILE"
 
 
 def _theme_profile_enabled() -> bool:
-    return os.getenv(_THEME_PROFILE_ENV, "").strip().lower() in {
+    val = os.environ.get("STREAMCAPEVO_THEME_PROFILE") or os.environ.get("STREAMCAP_THEME_PROFILE") or ""
+    return val.strip().lower() in {
         "1",
         "true",
         "yes",
@@ -220,7 +221,7 @@ def _generate_stylesheet(c: dict[str, str]) -> str:
     """Build the full application QSS from the token dictionary ``c``."""
     return f"""
     /* ═══════════════════════════════════════════════════════════
-       STREAMCAP — Elite Neutral Dark Stylesheet
+       STREAMCAPEVO — Elite Neutral Dark Stylesheet
        Token-driven via ThemeManager (Pyside6_Native_Design_Guide §5)
     ═══════════════════════════════════════════════════════════ */
 

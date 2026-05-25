@@ -1,19 +1,21 @@
 @echo off
 setlocal
 
+if not defined STREAMCAPEVO_SKIP_BUILD_PAUSE set "STREAMCAPEVO_SKIP_BUILD_PAUSE=%STREAMCAP_SKIP_BUILD_PAUSE%"
+
 echo ====================================================
-echo Building StreamCap (Qt) with Nuitka
+echo Building StreamCapEvo (Qt) with Nuitka
 echo ====================================================
 
 if not exist "venv\Scripts\python.exe" (
     echo [ERROR] Virtual environment not found in "venv".
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 1
 )
 
 if not exist "scripts\bump_version.py" (
     echo [ERROR] Version helper not found at "scripts\bump_version.py".
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 1
 )
 
@@ -22,18 +24,18 @@ echo [1/3] Validating version metadata...
 if %ERRORLEVEL% neq 0 (
     echo.
     echo [ERROR] Version metadata validation failed.
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 1
 )
 
 for /f "delims=" %%V in ('venv\Scripts\python.exe scripts\bump_version.py --current') do set "APP_VERSION=%%V"
 if not defined APP_VERSION (
     echo [ERROR] Could not read application version.
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 1
 )
 
-echo Building StreamCap version %APP_VERSION%
+echo Building StreamCapEvo version %APP_VERSION%
 
 echo [2/3] Cleaning old build files...
 if exist "dist\main_qt.build" rd /s /q "dist\main_qt.build"
@@ -62,26 +64,26 @@ echo [3/3] Compiling with Nuitka...
     --include-data-files="config\language.json=config\language.json" ^
     --include-data-files="config\version.json=config\version.json" ^
     --output-dir="dist" ^
-    --output-filename="StreamCap.exe" ^
+    --output-filename="StreamCapEvo.exe" ^
     --report="dist\nuitka-report.xml" ^
     --report-diffable ^
-    --product-name="StreamCap" ^
+    --product-name="StreamCapEvo" ^
     --file-version="%APP_VERSION%" ^
     --product-version="%APP_VERSION%" ^
-    --company-name="StreamCap" ^
+    --company-name="StreamCapEvo" ^
     main_qt.py
 
 if %ERRORLEVEL% equ 0 (
     echo ====================================================
     echo Build Successful!
-    echo Executable located at: dist\main_qt.dist\StreamCap.exe
+echo Executable located at: dist\main_qt.dist\StreamCapEvo.exe
     echo Nuitka report located at: dist\nuitka-report.xml
     echo ====================================================
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 0
 ) else (
     echo.
     echo [ERROR] Build failed. Check the Nuitka logs above.
-    if not "%STREAMCAP_SKIP_BUILD_PAUSE%"=="1" pause
+    if not "%STREAMCAPEVO_SKIP_BUILD_PAUSE%"=="1" pause
     exit /b 1
 )

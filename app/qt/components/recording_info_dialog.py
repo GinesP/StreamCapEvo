@@ -1,5 +1,5 @@
 """
-Qt Recording Info Dialog — StreamCap.
+Qt Recording Info Dialog — StreamCapEvo.
 Detailed view of stream metadata and intelligence stats.
 """
 

@@ -5,8 +5,9 @@ set "ROOT_DIR=%~dp0"
 cd /d "%ROOT_DIR%"
 
 set "INNO_SCRIPT=installer\StreamCap.iss"
-set "BUILD_EXE=dist\main_qt.dist\StreamCap.exe"
+set "BUILD_EXE=dist\main_qt.dist\StreamCapEvo.exe"
 set "STREAMCAP_SKIP_BUILD_PAUSE=1"
+set "STREAMCAPEVO_SKIP_BUILD_PAUSE=1"
 set "RELEASE_MODE=0"
 set "BUMP_MODE="
 set "BUMP_VALUE="
@@ -104,7 +105,7 @@ if "%RELEASE_MODE%"=="1" (
 )
 
 echo ====================================================
-echo Building StreamCap and packaging Windows installer
+echo Building StreamCapEvo and packaging Windows installer
 echo ====================================================
 
 echo [1/3] Running Nuitka build...

@@ -1,5 +1,5 @@
 """
-Qt Toast Notification System for StreamCap.
+Qt Toast Notification System for StreamCapEvo.
 Provides floating, auto-dismissing alerts in the corner of the window.
 """
 

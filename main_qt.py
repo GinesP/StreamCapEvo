@@ -1,5 +1,5 @@
 """
-StreamCap – Qt entry point.
+StreamCapEvo – Qt entry point.
 
 Run this script to launch the Qt-based UI prototype.
 The Flet version remains available via main.py.
@@ -52,7 +52,7 @@ def main():
 
     # Set AppUserModelID for Windows so the taskbar icon displays correctly
     if sys.platform == "win32":
-        myappid = 'streamcap.streamcap.app.1' # arbitrary string
+        myappid = 'StreamCapEvo.streamcapevo.app.1'
         try:
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:

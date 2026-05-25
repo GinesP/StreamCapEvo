@@ -20,7 +20,7 @@ from app.core.recording.predictor_metrics import PredictorMetricsStore
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Predictor metrics summary report")
     parser.add_argument("--lookback-hours", type=int, default=72)
-    parser.add_argument("--user-data-dir", default=os.environ.get("STREAMCAP_USER_DATA_DIR"))
+    parser.add_argument("--user-data-dir", default=os.environ.get("STREAMCAPEVO_USER_DATA_DIR") or os.environ.get("STREAMCAP_USER_DATA_DIR"))
     parser.add_argument(
         "--metrics-file", default=None, help="Override path to predictor_metrics.db or legacy predictor_metrics.jsonl"
     )

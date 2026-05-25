@@ -27,8 +27,8 @@ class ConfigManagerUserDataTests(unittest.TestCase):
             clear=False,
         ):
             self.assertEqual(
-                ConfigManager.get_default_user_data_path(r"C:\Program Files\StreamCap"),
-                r"C:\Users\tester\AppData\Local\StreamCap",
+                ConfigManager.get_default_user_data_path(r"C:\Program Files\StreamCapEvo"),
+                r"C:\Users\tester\AppData\Local\StreamCapEvo",
             )
 
     def test_uses_user_data_for_mutable_files_and_bundle_for_readonly_files(self):

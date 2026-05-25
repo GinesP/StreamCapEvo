@@ -11,6 +11,7 @@ import aiofiles
 import aiosqlite
 
 from ...utils.logger import logger
+from ..data_import.migration import detect_evo_data, forward_migrate
 
 T = TypeVar("T")
 
@@ -60,20 +61,65 @@ class ConfigManager:
 
         self._cache = {}
         self._recordings_state_cache = {}
+        
+        # Check for forward migration from Evo 1.x data directory
+        self._check_and_perform_forward_migration()
+        
         os.makedirs(self.config_path, exist_ok=True)
         self.migrate_legacy_config()
         self.init()
 
+    def _check_and_perform_forward_migration(self):
+        """Check for Evo 1.x data and perform forward migration if needed.
+        
+        If the new StreamCapEvo path doesn't exist but the old StreamCap path does,
+        and it contains Evo data (sentinel or config keys), migrate it forward.
+        """
+        # Skip if user_data_path was explicitly overridden
+        if os.environ.get("STREAMCAPEVO_USER_DATA_DIR") or os.environ.get("STREAMCAP_USER_DATA_DIR"):
+            return
+        
+        # Skip if we're not on Windows
+        if sys.platform != "win32":
+            return
+        
+        # Skip if new path already exists
+        if os.path.exists(self.user_data_path):
+            return
+        
+        # Calculate old path (StreamCap)
+        local_app_data = os.environ.get("LOCALAPPDATA")
+        if not local_app_data:
+            return
+        
+        old_path = os.path.join(local_app_data, "StreamCap")
+        
+        # Check if old path exists
+        if not os.path.exists(old_path):
+            return
+        
+        # Detect if old path contains Evo data
+        detection = detect_evo_data(old_path)
+        
+        if detection.is_evo_data:
+            logger.info(f"Evo 1.x data detected at {old_path}, performing forward migration")
+            try:
+                forward_migrate(old_path, self.user_data_path)
+                logger.info(f"Forward migration completed successfully to {self.user_data_path}")
+            except Exception as e:
+                logger.error(f"Forward migration failed: {e}")
+                # Continue with fresh directory if migration fails
+
     @staticmethod
     def get_default_user_data_path(run_path):
-        override = os.environ.get("STREAMCAP_USER_DATA_DIR")
+        override = os.environ.get("STREAMCAPEVO_USER_DATA_DIR") or os.environ.get("STREAMCAP_USER_DATA_DIR")
         if override:
             return override
 
         if sys.platform == "win32":
             local_app_data = os.environ.get("LOCALAPPDATA")
             if local_app_data:
-                return os.path.join(local_app_data, "StreamCap")
+                return os.path.join(local_app_data, "StreamCapEvo")
 
         return run_path
 

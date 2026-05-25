@@ -1,16 +1,16 @@
-#define MyAppName "StreamCap"
-#define MyAppPublisher "StreamCap"
-#define MyAppExeName "StreamCap.exe"
+#define MyAppName "StreamCapEvo"
+#define MyAppPublisher "StreamCapEvo"
+#define MyAppExeName "StreamCapEvo.exe"
 #define MyBuildDir "..\dist\main_qt.dist"
 #define MyAppVersion GetVersionNumbersString(MyBuildDir + "\" + MyAppExeName)
 
 [Setup]
-AppId={{8F9A3E6B-6E7D-4BC8-9F67-5A4B7F91F6C2}
+AppId={{StreamCapEvo-6E7D-4BC8-9F67-5A4B7F91F6C2}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={localappdata}\Programs\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultDirName={localappdata}\Programs\StreamCapEvo
+DefaultGroupName=StreamCapEvo
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 SetupIconFile=StreamCapInstaller.ico
@@ -19,9 +19,9 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 OutputDir=..\dist\installer
-OutputBaseFilename=StreamCapSetup-{#MyAppVersion}
+OutputBaseFilename=StreamCapEvoSetup-{#MyAppVersion}
 CloseApplications=yes
-CloseApplicationsFilter={#MyAppExeName}
+CloseApplicationsFilter=StreamCapEvo.exe
 RestartApplications=no
 
 [Languages]
@@ -48,9 +48,9 @@ var
 function InitializeUninstall(): Boolean;
 begin
   DeleteUserData := MsgBox(
-    'Do you also want to delete StreamCap user data?' + #13#10 + #13#10 +
+    'Do you also want to delete StreamCapEvo user data?' + #13#10 + #13#10 +
     'This removes configuration, cookies, accounts, authentication data, and recordings.db from:' + #13#10 +
-    ExpandConstant('{localappdata}\StreamCap'),
+    ExpandConstant('{localappdata}\StreamCapEvo'),
     mbConfirmation,
     MB_YESNO
   ) = IDYES;
@@ -62,6 +62,6 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and DeleteUserData then
   begin
-    DelTree(ExpandConstant('{localappdata}\StreamCap'), True, True, True);
+    DelTree(ExpandConstant('{localappdata}\StreamCapEvo'), True, True, True);
   end;
 end;
