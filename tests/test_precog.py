@@ -127,5 +127,70 @@ class PrecogPredictTests(unittest.TestCase):
         self.assertEqual(result.adjusted_interval, direct_interval)
 
 
+class PrecogDecideQueueTests(unittest.TestCase):
+    @patch("app.core.recording.history_manager.random.randint", return_value=60)
+    def test_decide_queue_fast_when_likelihood_high(self, _mock_rand):
+        recording = _make_recording()
+        recording.is_live = True  # likelihood 1.0 -> interval 60
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+
+        self.assertTrue(decision.should_check)
+        self.assertEqual(decision.queue_key, "F")
+        self.assertEqual(decision.adjusted_interval, 60)
+        self.assertEqual(decision.likelihood, 1.0)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_decide_queue_medium_for_interval_180(self, _mock_rand):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        # No historical data → likelihood 0.05, interval = base*1.5 = 450,
+        # but with mock randint=150 it's 150, so M queue
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertEqual(decision.queue_key, "M")
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=200)
+    def test_decide_queue_slow_for_interval_above_180(self, _mock_rand):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        # interval 200 > 180 -> S
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertEqual(decision.queue_key, "S")
+
+    def test_decide_queue_favorite_cap_at_180(self):
+        recording = _make_recording()
+        recording.is_favorite = True
+        # If interval would be >180, cap it
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        with patch("app.core.recording.history_manager.random.randint", return_value=200):
+            decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertEqual(decision.adjusted_interval, 180)
+        self.assertEqual(decision.queue_key, "M")  # because 180 -> M
+
+    def test_decide_queue_should_check_false_when_not_exceeded(self):
+        recording = _make_recording()
+        recording.detection_time = datetime(2026, 5, 27, 19, 28, 0).time()  # 2 min ago
+        now = datetime(2026, 5, 27, 19, 30, 0)  # 2 min later, interval 300 -> not exceeded
+        with patch("app.core.recording.history_manager.random.randint", return_value=300):
+            decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertFalse(decision.should_check)
+
+    def test_decide_queue_should_check_true_when_exceeded(self):
+        recording = _make_recording()
+        recording.detection_time = datetime(2026, 5, 27, 18, 0, 0).time()  # 2 hours ago
+        now = datetime(2026, 5, 27, 20, 0, 0)  # 2 hours later, interval 300 -> exceeded
+        with patch("app.core.recording.history_manager.random.randint", return_value=300):
+            decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertTrue(decision.should_check)
+
+    def test_decide_queue_should_check_true_when_no_detection_time(self):
+        recording = _make_recording()
+        recording.detection_time = None
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        self.assertTrue(decision.should_check)
+
+
 if __name__ == "__main__":
     unittest.main()

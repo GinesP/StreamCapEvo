@@ -435,26 +435,14 @@ class RecordingManager:
                 continue
 
             # 1. Apply Smart Predictive Polling (Intelligence)
-            from .history_manager import HistoryManager
-            likelihood = HistoryManager.get_likelihood_score(recording)
+            from .precog import Precog
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
-            recording.loop_time_seconds = HistoryManager.get_adjusted_interval(recording, base_interval)
+            decision = Precog.decide_queue(recording, base_interval=base_interval)
+            recording.loop_time_seconds = decision.adjusted_interval
+            likelihood = decision.likelihood
 
-            # Favorites never go to slow queue (>180s)
-            if getattr(recording, "is_favorite", False) and recording.loop_time_seconds > 180:
-                recording.loop_time_seconds = 180
-
-            # 2. Check if it's time to poll
-            is_exceeded = utils.is_time_interval_exceeded(recording.detection_time, recording.loop_time_seconds)
-            
-            if not recording.detection_time or is_exceeded:
-                # 3. Categorize by priority for logging and dispatch
-                if recording.loop_time_seconds <= 60:
-                    prio_key = "F"
-                elif recording.loop_time_seconds <= 180:
-                    prio_key = "M"
-                else:
-                    prio_key = "S"
+            if decision.should_check:
+                prio_key = decision.queue_key
 
                 # 4. Prevent redundant queuing if already checking or in queue
                 if recording.is_checking:

@@ -97,9 +97,11 @@ Detalles del paso ya hecho:
 - Devuelve un `PrecogPrediction` simple e inmutable.
 - No cambia el comportamiento existente ni migra todavía consumidores.
 
-#### 2. `decide_queue(recording, now=None)`
+#### 2. `decide_queue(recording, base_interval, now=None)`
 
-Debe encapsular la decisión operativa mínima actual:
+**Estado**: ✅ implementado.
+
+Encapsula la decisión operativa mínima actual:
 
 - `should_check`
 - `queue_priority` (`F`, `M`, `S`)
@@ -107,9 +109,17 @@ Debe encapsular la decisión operativa mínima actual:
 - `likelihood`
 - `reason`
 
+Detalles del paso:
+
+- `Precog.decide_queue()` delega en `HistoryManager.get_forecast_details()` y `HistoryManager.get_adjusted_interval()`.
+- Conserva el cap de favoritos (`>180 → 180`) exactamente como en `record_manager.py`.
+- Conserva los thresholds de cola (`<=60` F, `<=180` M, else S).
+- Calcula `should_check` replicando la lógica de `utils.is_time_interval_exceeded` para mantener testabilidad.
+- `record_manager.py` ahora consume `Precog.decide_queue()` en lugar de calcular `likelihood`, `adjusted_interval`, `queue_key` y `should_check` inline.
+
 #### 3. `get_ui_state(recording, now=None)`
 
-Debe ofrecer a la UI una vista consistente para evitar llamadas dispersas o lógica duplicada.
+Pendiente de evaluación. Debe ofrecer a la UI una vista consistente para evitar llamadas dispersas o lógica duplicada.
 
 ## Qué NO vamos a hacer en esta fase
 
@@ -178,6 +188,8 @@ Este archivo tiene lógica derivada/duplicada (`_get_forecast_time_info`) que us
 
 ## Paso 4 — Mover la decisión de cola a Precog
 
+**Estado**: ✅ completado.
+
 Integrar Precog en:
 
 - `app/core/recording/record_manager.py`
@@ -185,6 +197,17 @@ Integrar Precog en:
 Objetivo:
 
 - que la decisión `likelihood -> adjusted_interval -> queue` quede centralizada.
+
+Archivos afectados:
+
+- `app/core/recording/precog.py` — añadidos `PrecogDecision`, `Precog.decide_queue()`, `Precog._should_check()`
+- `app/core/recording/record_manager.py` — reemplazado bloque inline de decisión por llamada a `Precog.decide_queue()`
+- `tests/test_precog.py` — añadidos tests focalizados para `decide_queue`
+
+Verificación ejecutada:
+
+- `python -m unittest tests.test_precog -v` → OK (13 tests)
+- `python -m unittest discover` → OK (errores preexistentes por dependencias Qt/aiofiles no instaladas)
 
 ## Paso 5 — Consolidación
 
@@ -207,16 +230,16 @@ Cuando los consumidores ya usen Precog:
 - [x] Migrar `recording_card.py` a Precog
 - [x] Migrar resto de consumidores de lectura a Precog (`recordings_view.py`)
 - [x] Migrar `live_forecast_dialog.py` parcialmente (lecturas directas seguras)
-- [ ] Migrar decisión operativa de cola a Precog
+- [x] Migrar decisión operativa de cola a Precog
 - [ ] Evaluar limpieza posterior una vez centralizado (incluye absorber `_get_forecast_time_info`)
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. continuar con `app/core/recording/record_manager.py` (decisión operativa de cola) como siguiente consumidor operativo,
-2. evaluar si Precog necesita un método `time_state()` o similar para absorber `_get_forecast_time_info()` de `live_forecast_dialog.py` sin que la UI duplique lógica de clustering,
-3. solo entonces eliminar el import residual de `HistoryManager` en `live_forecast_dialog.py`.
+1. evaluar si Precog necesita un método `time_state()` o similar para absorber `_get_forecast_time_info()` de `live_forecast_dialog.py` sin que la UI duplique lógica de clustering,
+2. solo entonces eliminar el import residual de `HistoryManager` en `live_forecast_dialog.py`,
+3. revisar si queda algún consumidor directo de `HistoryManager` fuera de Precog y del diálogo residual.
 
 ## Referencias
 
