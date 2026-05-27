@@ -4,6 +4,7 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from app.core.recording.predictor_metrics import MetricsSummary, PredictorMetricsStore
@@ -241,6 +242,142 @@ class PredictorMetricsStoreTests(unittest.TestCase):
                 "note_lead_is_interval_artifact": True,
             },
         )
+
+    def _insert_records(self, store: PredictorMetricsStore, records: list[tuple[str, str, dict]]) -> None:
+        """Insert records with explicit timestamps directly into the DB."""
+        with store._connect() as conn:
+            for ts, event, payload in records:
+                conn.execute(
+                    "INSERT INTO predictor_metrics (timestamp, event, rec_id, is_live, priority, likelihood, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        ts,
+                        event,
+                        payload.get("rec_id") or None,
+                        1 if payload.get("is_live") else 0,
+                        payload.get("priority"),
+                        payload.get("likelihood"),
+                        json.dumps(payload, ensure_ascii=False),
+                    ),
+                )
+            conn.commit()
+
+    def test_purge_removes_old_records_and_keeps_recent(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(
+                Path(temp_dir) / "predictor_metrics.db",
+                retention_hours=72,
+                purge_throttle_minutes=0,  # disable throttle for deterministic test
+            )
+            now = datetime.utcnow()
+            old_ts = (now - timedelta(hours=73)).isoformat()
+            recent_ts = (now - timedelta(hours=1)).isoformat()
+
+            self._insert_records(
+                store,
+                [
+                    (old_ts, "check_result", {"rec_id": "old-rec", "is_live": False}),
+                    (recent_ts, "check_result", {"rec_id": "recent-rec", "is_live": True}),
+                ],
+            )
+
+            # Trigger purge via record_event
+            store.record_event("check_dispatched", {"rec_id": "trigger", "loop_time_seconds": 60})
+
+            with store._connect() as conn:
+                rows = conn.execute("SELECT rec_id FROM predictor_metrics ORDER BY timestamp ASC").fetchall()
+
+            rec_ids = [r[0] for r in rows]
+            self.assertNotIn("old-rec", rec_ids)
+            self.assertIn("recent-rec", rec_ids)
+            self.assertIn("trigger", rec_ids)
+
+    def test_purge_throttling_limits_frequency(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(
+                Path(temp_dir) / "predictor_metrics.db",
+                retention_hours=72,
+                purge_throttle_minutes=60,  # long throttle
+            )
+            now = datetime.utcnow()
+            old_ts = (now - timedelta(hours=73)).isoformat()
+
+            self._insert_records(
+                store,
+                [
+                    (old_ts, "check_result", {"rec_id": "old-rec", "is_live": False}),
+                ],
+            )
+
+            # First write triggers purge
+            store.record_event("check_dispatched", {"rec_id": "t1", "loop_time_seconds": 60})
+
+            # Manually backdate _last_purge_time so the second write would also purge
+            # (simulating no throttle)
+            store._last_purge_time = now - timedelta(minutes=61)
+
+            # Second write should purge again because throttle elapsed
+            store.record_event("check_dispatched", {"rec_id": "t2", "loop_time_seconds": 60})
+
+            with store._connect() as conn:
+                row_count = conn.execute("SELECT COUNT(*) FROM predictor_metrics").fetchone()[0]
+
+            # old-rec purged, t1 and t2 remain
+            self.assertEqual(row_count, 2)
+
+    def test_purge_does_not_run_when_throttle_active(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(
+                Path(temp_dir) / "predictor_metrics.db",
+                retention_hours=72,
+                purge_throttle_minutes=60,
+            )
+            now = datetime.utcnow()
+            old_ts = (now - timedelta(hours=73)).isoformat()
+
+            self._insert_records(
+                store,
+                [
+                    (old_ts, "check_result", {"rec_id": "old-rec", "is_live": False}),
+                ],
+            )
+
+            # First write purges
+            store.record_event("check_dispatched", {"rec_id": "t1", "loop_time_seconds": 60})
+
+            # Second write with throttle still active should NOT purge again
+            store.record_event("check_dispatched", {"rec_id": "t2", "loop_time_seconds": 60})
+
+            with store._connect() as conn:
+                row_count = conn.execute("SELECT COUNT(*) FROM predictor_metrics").fetchone()[0]
+
+            # old-rec purged once, t1 and t2 remain
+            self.assertEqual(row_count, 2)
+
+    def test_summarize_still_works_after_purge(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(
+                Path(temp_dir) / "predictor_metrics.db",
+                retention_hours=72,
+                purge_throttle_minutes=0,
+            )
+            now = datetime.utcnow()
+            old_ts = (now - timedelta(hours=73)).isoformat()
+            recent_ts = (now - timedelta(hours=1)).isoformat()
+
+            self._insert_records(
+                store,
+                [
+                    (old_ts, "check_result", {"rec_id": "old", "is_live": False, "loop_time_seconds": 300}),
+                    (recent_ts, "check_result", {"rec_id": "recent", "is_live": True, "loop_time_seconds": 300, "detection_latency_seconds": 180}),
+                ],
+            )
+
+            store.record_event("check_dispatched", {"rec_id": "trigger", "loop_time_seconds": 60})
+
+            summary = store.summarize(lookback_hours=72)
+            self.assertEqual(summary.total_checks, 1)
+            self.assertEqual(summary.live_detections, 1)
+            self.assertEqual(summary.non_live_results, 0)
 
 
 class PredictorMetricsReportTests(unittest.TestCase):

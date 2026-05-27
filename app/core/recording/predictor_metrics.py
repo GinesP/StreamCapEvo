@@ -90,8 +90,27 @@ class MetricsSummary:
         }
 
 
+# Default retention window for tuning metrics (not indefinite history).
+DEFAULT_RETENTION_HOURS = 72
+
+# Minimum minutes between purges to avoid SQLite cost on every write.
+DEFAULT_PURGE_THROTTLE_MINUTES = 10
+
+
 class PredictorMetricsStore:
-    def __init__(self, file_path: str | Path):
+    """SQLite-backed store for recent predictor tuning metrics.
+
+    Records are kept only within a configurable rolling window (default 72h).
+    Older rows are purged automatically with a throttle to avoid per-write cost.
+    This is intended for operational tuning, not long-term historical analysis.
+    """
+
+    def __init__(
+        self,
+        file_path: str | Path,
+        retention_hours: int = DEFAULT_RETENTION_HOURS,
+        purge_throttle_minutes: int = DEFAULT_PURGE_THROTTLE_MINUTES,
+    ):
         self.file_path = Path(file_path)
         self.file_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -102,6 +121,9 @@ class PredictorMetricsStore:
         self.legacy_jsonl_path = (
             self.file_path if self.file_path.suffix.lower() == ".jsonl" else self.file_path.with_suffix(".jsonl")
         )
+        self._retention_hours = max(1, int(retention_hours))
+        self._purge_throttle = timedelta(minutes=max(1, int(purge_throttle_minutes)))
+        self._last_purge_time: datetime | None = None
         self._init_db()
         self._migrate_legacy_jsonl_if_needed()
 
@@ -249,10 +271,24 @@ class PredictorMetricsStore:
                 return float(value)
         return None
 
+    def _maybe_purge(self, conn: sqlite3.Connection) -> None:
+        """Purge old records if throttle interval has passed."""
+        now = _utcnow()
+        if self._last_purge_time is not None and (now - self._last_purge_time) < self._purge_throttle:
+            return
+        cutoff = now - timedelta(hours=self._retention_hours)
+        conn.execute(
+            "DELETE FROM predictor_metrics WHERE timestamp < ?",
+            (cutoff.isoformat(),),
+        )
+        conn.commit()
+        self._last_purge_time = now
+
     def record_event(self, event_type: str, payload: dict) -> None:
         timestamp = _utcnow().isoformat()
         with self._lock:
             with self._connect() as conn:
+                self._maybe_purge(conn)
                 conn.execute(
                     "INSERT INTO predictor_metrics (timestamp, event, rec_id, is_live, priority, likelihood, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (

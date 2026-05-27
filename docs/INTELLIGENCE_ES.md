@@ -101,11 +101,13 @@ consistency_score = total_slots / (num_days * 5.0)
 
 ### 2.5 Predictor Metrics (Instrumentación)
 
-El `PredictorMetricsStore` registra cada evento de dispatch y resultado en un archivo JSONL:
+El `PredictorMetricsStore` registra cada evento de dispatch y resultado en SQLite:
 
 ```
-config/predictor_metrics.jsonl
+config/predictor_metrics.db
 ```
+
+**Ventana operativa**: por defecto se conservan solo las últimas **72 horas**. Los registros antiguos se purgan automáticamente con un throttle de 10 minutos para no penalizar el rendimiento en cada escritura. Esto mantiene el archivo pequeño y enfocado en métricas de tuning reciente; no es un historial indefinido.
 
 **Eventos**:
 | Evento | Momento | Payload |
@@ -119,7 +121,7 @@ config/predictor_metrics.jsonl
 
 El reporte de métricas se genera con `scripts/predictor_metrics_report.py`:
 ```bash
-# Reporte estándar (JSON, últimos 72h)
+# Reporte estándar (JSON, últimas 72h)
 python scripts/predictor_metrics_report.py
 
 # Reporte legible (incluye percentiles, breakdown F/M/S, likelihood por cola)
@@ -412,7 +414,8 @@ RecordingManager
 
 PredictorMetricsStore
 ├── record_event(event_type, payload)
-└── summarize(lookback_hours) → MetricsSummary
+├── summarize(lookback_hours) → MetricsSummary
+└── purge old records automatically (default 72h retention, 10min throttle)
 ```
 
 ---
@@ -421,6 +424,7 @@ PredictorMetricsStore
 
 | Fecha | Cambio | Motivo |
 |-------|--------|--------|
+| 2026-05-26 | Retención automática de 72h en `PredictorMetricsStore` con throttle de 10min | Evitar crecimiento indefinido del archivo .db; mantener métricas enfocadas en tuning reciente |
 | 2026-05-10 | Fix: `next_slot_text` prefiere sesiones/horas futuras | A las 23:10 mostraba "Próximo: 20:38" (pasado) en vez de la siguiente ventana |
 | 2026-05-10 | Workers adaptativos con límite global (solo 1 cola boosted) | Evitar >4 workers concurrentes → no disparar antibot |
 | 2026-05-10 | Fix: likelihood gana al deep sleep en `get_adjusted_interval()` | Streams 100% likelihood caían en Slow por ser históricamente inactivos |

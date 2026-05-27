@@ -188,3 +188,4 @@ config/predictor_metrics*.jsonl
 config/predictor_metrics*.db
 config/predictor_metrics*.db-*
 tmp/
+.codegraph/
