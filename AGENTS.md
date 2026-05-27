@@ -14,7 +14,9 @@
 - Test command used by CI: `python -m unittest discover`.
 - Version metadata check: `.\venv\Scripts\python.exe scripts\bump_version.py --check`.
 - Version helpers: `.\venv\Scripts\python.exe scripts\bump_version.py --current`, `--patch`, or `--set X.Y.Z`.
+- Windows packaging entry point: `.\package_windows_installer.bat` (release variants: `--release`, `--patch`, `--set X.Y.Z`).
 - Manual Windows installer compile: `ISCC.exe .\installer\StreamCap.iss`.
+- Predictor metrics report: `python scripts/predictor_metrics_report.py` (add `--human` for the readable summary or `--metrics-file <path>` for a backup/legacy file).
 
 ## Release Workflow
 - `pyproject.toml` is the technical version source of truth.
