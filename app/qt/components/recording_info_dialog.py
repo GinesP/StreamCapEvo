@@ -26,7 +26,7 @@ from app.qt.themes.theme import theme_manager
 from app.qt.utils.elevation import apply_elevation
 from app.utils.i18n import tr
 from app.models.recording.recording_status_model import RecordingStatus
-from app.core.recording.history_manager import HistoryManager
+from app.core.recording.precog import Precog
 
 
 class QtRecordingInfoDialog(QDialog):
@@ -128,7 +128,8 @@ class QtRecordingInfoDialog(QDialog):
         avg_min = getattr(self.rec, "avg_session_duration_minutes", None)
         avg_session_str = self._format_duration(avg_min) if avg_min is not None else tr("recording_info.never", default="Never")
 
-        forecast = HistoryManager.get_forecast_details(self.rec)
+        prediction = Precog.predict(self.rec)
+        forecast = prediction.forecast_details
         next_slot_text = forecast.get("next_slot_text") or ""
         window_text = forecast.get("window_text") or ""
         if next_slot_text and window_text:

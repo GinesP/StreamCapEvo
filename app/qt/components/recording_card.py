@@ -469,8 +469,8 @@ class QtRecordingCard(QFrame):
 
         score = 0
         try:
-            from app.core.recording.history_manager import HistoryManager
-            score = HistoryManager.get_likelihood_score(rec)
+            from app.core.recording.precog import Precog
+            score = Precog.predict(rec).likelihood
         except Exception:
             pass
 

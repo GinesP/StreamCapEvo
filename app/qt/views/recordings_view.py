@@ -292,9 +292,9 @@ class RecordingListDelegate(QStyledItemDelegate):
     @staticmethod
     def _likelihood(rec) -> float:
         try:
-            from app.core.recording.history_manager import HistoryManager
+            from app.core.recording.precog import Precog
 
-            return HistoryManager.get_likelihood_score(rec)
+            return Precog.predict(rec).likelihood
         except Exception:
             return 0.0
 

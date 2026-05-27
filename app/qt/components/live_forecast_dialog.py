@@ -12,6 +12,7 @@ from PySide6.QtGui import QColor
 from app.utils.i18n import tr
 
 from app.core.recording.history_manager import HistoryManager
+from app.core.recording.precog import Precog
 from app.qt.themes.theme import theme_manager
 from datetime import datetime
 
@@ -215,7 +216,7 @@ class ForecastItemWidget(QFrame):
     def update_time_info(self):
         c = theme_manager.colors
         info = _get_forecast_time_info(self.recording)
-        forecast = HistoryManager.get_forecast_details(self.recording)
+        forecast = Precog.predict(self.recording).forecast_details
         
         if info["state"] == "none":
             self.time_lbl.setText("")
@@ -423,7 +424,7 @@ class LiveForecastDialog(QDialog):
             if state in ('live_range', 'expected', 'delayed') or rec.is_live:
                 return 0
             # Future slots — parse next_slot_text for real distance
-            forecast = HistoryManager.get_forecast_details(rec)
+            forecast = Precog.predict(rec).forecast_details
             slot = forecast.get("next_slot_text", "")
             if not slot:
                 return None
@@ -439,7 +440,7 @@ class LiveForecastDialog(QDialog):
         # Gather forecasts with proximity info
         forecasts = []
         for rec in self.recordings:
-            score = HistoryManager.get_likelihood_score(rec)
+            score = Precog.predict(rec).likelihood
             info = _get_forecast_time_info(rec)
             state = info.get("state")
 

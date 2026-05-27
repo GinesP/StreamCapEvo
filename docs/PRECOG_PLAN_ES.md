@@ -69,11 +69,11 @@ No reemplaza todavía el algoritmo interno. Solo lo reúne en un punto único.
 
 ### Archivo nuevo previsto
 
-- `app/core/recording/precog.py`
+- `app/core/recording/precog.py` ✅ creado
 
 ### Clase pública prevista
 
-- `Precog`
+- `Precog` ✅ creada
 
 ### Responsabilidades públicas previstas
 
@@ -87,6 +87,15 @@ Debe devolver un snapshot unificado con datos como:
 - `consistency_score`
 - `adjusted_interval`
 - `forecast_details`
+
+**Estado actual**: ✅ implementado como primer paso mínimo.
+
+Detalles del paso ya hecho:
+
+- `Precog.predict()` delega en `HistoryManager.get_forecast_details()`.
+- `Precog.predict()` delega en `HistoryManager.get_adjusted_interval()`.
+- Devuelve un `PrecogPrediction` simple e inmutable.
+- No cambia el comportamiento existente ni migra todavía consumidores.
 
 #### 2. `decide_queue(recording, now=None)`
 
@@ -123,26 +132,49 @@ Objetivo:
 - no cambiar comportamiento,
 - delegar internamente en la lógica existente.
 
+**Estado**: ✅ completado.
+
+Archivos creados en este paso:
+
+- `app/core/recording/precog.py`
+- `tests/test_precog.py`
+
+Verificación ejecutada:
+
+- `python -m unittest tests.test_precog -v` → OK
+
 ## Paso 2 — Migrar consumidores de lectura de bajo riesgo
 
 Mover primero los consumidores que solo leen datos predictivos:
 
-- `app/qt/components/recording_card.py`
-- `app/qt/components/recording_info_dialog.py`
-- `app/qt/views/recordings_view.py`
+- `app/qt/components/recording_info_dialog.py` ✅ migrado
+- `app/qt/components/recording_card.py` ✅ migrado
+- `app/qt/views/recordings_view.py` ✅ migrado
 
 Objetivo:
 
 - reducir acceso directo a `HistoryManager`,
 - comprobar que Precog sirve como punto de entrada estable.
 
+**Siguiente candidato recomendado**: `app/qt/components/recording_card.py`
+
 ## Paso 3 — Migrar `live_forecast_dialog.py`
 
-Revisar y migrar:
+Revisado y migrado parcialmente:
 
 - `app/qt/components/live_forecast_dialog.py`
 
-Este paso merece atención especial porque aquí puede haber lógica derivada o duplicada.
+Este archivo tiene lógica derivada/duplicada (`_get_forecast_time_info`) que usa `HistoryManager._cluster_hours`. No se migró esa parte porque requeriría absorber la lógica de clustering en Precog o rehacer el estado de UI, lo que excede el cambio mínimo seguro acordado.
+
+### Qué se migró
+- `HistoryManager.get_forecast_details()` → `Precog.predict(...).forecast_details` (2 usos en `ForecastItemWidget.update_time_info` y `_slot_minutes_until`).
+- `HistoryManager.get_likelihood_score()` → `Precog.predict(...).likelihood` (1 uso en `_populate_list`).
+
+### Qué NO se migró y por qué
+- `HistoryManager._cluster_hours(active_hours)` dentro de `_get_forecast_time_info()`. Es un método privado de `HistoryManager`; `Precog` no lo expone. Migrarlo requeriría o bien añadirlo a Precog (sobreingeniería) o reescribir la máquina de estados del diálogo (cambio de comportamiento). Se deja pendiente para una fase posterior de consolidación.
+
+### Estado del import
+- El archivo aún importa `HistoryManager` por `_cluster_hours`. No se puede eliminar hasta que `_get_forecast_time_info()` se absorba en Precog o se reescriba.
 
 ## Paso 4 — Mover la decisión de cola a Precog
 
@@ -168,18 +200,23 @@ Cuando los consumidores ya usen Precog:
 - [x] Decidido el nombre **Precog**
 - [x] Acordadas las reglas de diseño
 - [x] Resuelta la retención de 72 horas de `predictor_metrics`
-- [ ] Crear `app/core/recording/precog.py`
-- [ ] Migrar consumidores de lectura a Precog
+- [x] Crear `app/core/recording/precog.py`
+- [x] Crear `Precog.predict()` como fachada mínima
+- [x] Añadir tests focalizados de equivalencia inicial (`tests/test_precog.py`)
+- [x] Migrar consumidor de lectura de bajo riesgo a Precog (`recording_info_dialog.py`)
+- [x] Migrar `recording_card.py` a Precog
+- [x] Migrar resto de consumidores de lectura a Precog (`recordings_view.py`)
+- [x] Migrar `live_forecast_dialog.py` parcialmente (lecturas directas seguras)
 - [ ] Migrar decisión operativa de cola a Precog
-- [ ] Evaluar limpieza posterior una vez centralizado
+- [ ] Evaluar limpieza posterior una vez centralizado (incluye absorber `_get_forecast_time_info`)
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. crear `app/core/recording/precog.py`,
-2. implementar `Precog.predict()` con comportamiento equivalente al actual,
-3. migrar primero un consumidor de bajo riesgo.
+1. continuar con `app/core/recording/record_manager.py` (decisión operativa de cola) como siguiente consumidor operativo,
+2. evaluar si Precog necesita un método `time_state()` o similar para absorber `_get_forecast_time_info()` de `live_forecast_dialog.py` sin que la UI duplique lógica de clustering,
+3. solo entonces eliminar el import residual de `HistoryManager` en `live_forecast_dialog.py`.
 
 ## Referencias
 
@@ -188,3 +225,5 @@ Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 - `app/core/recording/record_manager.py`
 - `app/models/recording/recording_model.py`
 - `app/core/recording/predictor_metrics.py`
+- `app/core/recording/precog.py`
+- `tests/test_precog.py`
