@@ -127,6 +127,100 @@ class PrecogPredictTests(unittest.TestCase):
         self.assertEqual(result.adjusted_interval, direct_interval)
 
 
+class PrecogTimeStateTests(unittest.TestCase):
+    def test_no_active_hours_returns_none(self):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "none")
+        self.assertEqual(result["text"], "")
+        self.assertEqual(result["color"], "")
+
+    def test_live_inside_cluster_returns_live_range(self):
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},  # Tuesday
+        )
+        recording.is_live = True
+        now = datetime(2026, 5, 27, 20, 30, 0)  # Tuesday 20:30
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "live_range")
+        self.assertEqual(result["text_key"], "live_forecast_dialog.status_live")
+        self.assertEqual(result["text"], "20:00‑22:00")
+        self.assertEqual(result["color"], "#E53935")
+        self.assertEqual(result["prefix"], "🔴 ")
+
+    def test_expected_when_minutes_into_cluster_low(self):
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},
+        )
+        recording.is_live = False
+        now = datetime(2026, 5, 27, 20, 10, 0)  # 10 min into cluster
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "expected")
+        self.assertEqual(result["text_key"], "live_forecast_dialog.status_expected")
+        self.assertEqual(result["color"], "#FF9800")
+        self.assertEqual(result["prefix"], "⏳ ")
+
+    def test_delayed_when_minutes_into_cluster_high(self):
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},
+        )
+        recording.is_live = False
+        now = datetime(2026, 5, 27, 20, 20, 0)  # 20 min into cluster
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "delayed")
+        self.assertEqual(result["text_key"], "live_forecast_dialog.status_delayed")
+        self.assertEqual(result["color"], "#FF5252")
+        self.assertEqual(result["prefix"], "⚠ ")
+
+    def test_countdown_when_next_hour_is_next(self):
+        recording = _make_recording(
+            historical_intervals={"2": [22]},  # Tuesday 22:00
+        )
+        now = datetime(2026, 5, 27, 21, 15, 0)  # Tuesday 21:15
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "countdown")
+        self.assertEqual(result["text_key"], "live_forecast_dialog.status_countdown")
+        self.assertEqual(result["color"], "#4CAF50")
+        self.assertEqual(result["prefix"], "⏱ ")
+        self.assertEqual(result["args"], {"minutes": 45})
+
+    def test_upcoming_when_far_from_window(self):
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},
+        )
+        now = datetime(2026, 5, 27, 10, 0, 0)  # Tuesday 10:00, far from 20:00
+
+        result = Precog.time_state(recording, now=now)
+
+        self.assertEqual(result["state"], "upcoming")
+        self.assertEqual(result["text"], "20:00")
+        self.assertEqual(result["color"], "")
+
+    def test_time_state_matches_legacy_logic(self):
+        """Ensure Precog.time_state produces the same result as the old _get_forecast_time_info helper."""
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},
+        )
+        now = datetime(2026, 5, 27, 20, 5, 0)
+
+        result = Precog.time_state(recording, now=now)
+
+        # The legacy helper would return "expected" at 20:05 (5 minutes into window)
+        self.assertEqual(result["state"], "expected")
+        self.assertEqual(result["text_key"], "live_forecast_dialog.status_expected")
+
+
 class PrecogDecideQueueTests(unittest.TestCase):
     @patch("app.core.recording.history_manager.random.randint", return_value=60)
     def test_decide_queue_fast_when_likelihood_high(self, _mock_rand):

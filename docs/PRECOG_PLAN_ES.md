@@ -117,9 +117,16 @@ Detalles del paso:
 - Calcula `should_check` replicando la lógica de `utils.is_time_interval_exceeded` para mantener testabilidad.
 - `record_manager.py` ahora consume `Precog.decide_queue()` en lugar de calcular `likelihood`, `adjusted_interval`, `queue_key` y `should_check` inline.
 
-#### 3. `get_ui_state(recording, now=None)`
+#### 3. `time_state(recording, now=None)`
 
-Pendiente de evaluación. Debe ofrecer a la UI una vista consistente para evitar llamadas dispersas o lógica duplicada.
+**Estado**: ✅ implementado.
+
+Centraliza en Precog el cálculo de estado temporal que antes vivía duplicado en `_get_forecast_time_info()` de `live_forecast_dialog.py`.
+
+- `Precog.time_state()` replica fielmente la lógica de clustering y estados (`none`, `live_range`, `expected`, `delayed`, `countdown`, `upcoming`).
+- Incluye helper privado `Precog._cluster_hours()` para eliminar la dependencia residual a `HistoryManager._cluster_hours()` desde la UI.
+- `_get_forecast_time_info()` en `live_forecast_dialog.py` ahora es un wrapper delegado a `Precog.time_state()`.
+- El import de `HistoryManager` se eliminó de `live_forecast_dialog.py`.
 
 ## Qué NO vamos a hacer en esta fase
 
@@ -231,15 +238,17 @@ Cuando los consumidores ya usen Precog:
 - [x] Migrar resto de consumidores de lectura a Precog (`recordings_view.py`)
 - [x] Migrar `live_forecast_dialog.py` parcialmente (lecturas directas seguras)
 - [x] Migrar decisión operativa de cola a Precog
-- [ ] Evaluar limpieza posterior una vez centralizado (incluye absorber `_get_forecast_time_info`)
+- [x] Implementar `Precog.time_state()` y absorber `_get_forecast_time_info()`
+- [x] Eliminar import residual de `HistoryManager` en `live_forecast_dialog.py`
+- [ ] Evaluar limpieza posterior una vez centralizado
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. evaluar si Precog necesita un método `time_state()` o similar para absorber `_get_forecast_time_info()` de `live_forecast_dialog.py` sin que la UI duplique lógica de clustering,
-2. solo entonces eliminar el import residual de `HistoryManager` en `live_forecast_dialog.py`,
-3. revisar si queda algún consumidor directo de `HistoryManager` fuera de Precog y del diálogo residual.
+1. revisar si queda algún consumidor directo de `HistoryManager` fuera de Precog (buscar imports directos en UI y managers),
+2. evaluar si es necesario mover `HistoryManager.get_forecast_details()` o `get_adjusted_interval()` dentro de Precog para reducir aún más la superficie de cambio,
+3. considerar si `Precog.time_state()` necesita evolucionar (por ejemplo, añadir horizontes o razones) según nuevas necesidades de UI.
 
 ## Referencias
 

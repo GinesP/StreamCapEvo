@@ -11,7 +11,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QColor
 from app.utils.i18n import tr
 
-from app.core.recording.history_manager import HistoryManager
 from app.core.recording.precog import Precog
 from app.qt.themes.theme import theme_manager
 from datetime import datetime
@@ -34,52 +33,9 @@ def _get_forecast_time_info(recording) -> dict:
     """
     Return dict with state, text_key, text, color, prefix for the forecast time column.
 
-    Uses the SAME cluster logic as HistoryManager.get_forecast_details to keep
-    the state (delayed / expected / countdown) consistent with the window label.
+    Delegado a ``Precog.time_state`` para mantener la lógica centralizada.
     """
-    now = datetime.now()
-    current_minutes = now.hour * 60 + now.minute
-    day_str = str(now.weekday())
-    intervals = recording.historical_intervals or {}
-    active_hours = intervals.get(day_str, [])
-
-    if not active_hours:
-        return {"state": "none", "text": "", "color": ""}
-
-    clusters = HistoryManager._cluster_hours(active_hours)
-
-    # Find the cluster containing the current hour
-    current_cluster = next((c for c in clusters if now.hour in c), None)
-
-    # Find the next future hour to compute display_hour (same as get_forecast_details)
-    future_hours = [h for h in active_hours if h * 60 >= current_minutes]
-    display_hour = min(future_hours) if future_hours else min(active_hours)
-
-    is_live = recording.is_live
-
-    # Only use the cluster that contains the display_hour for a consistent state
-    display_cluster = next((c for c in clusters if display_hour in c), clusters[0])
-    first_h = display_cluster[0]
-    last_h = display_cluster[-1]
-    end_h = (last_h + 1) % 24
-    range_str = f"{first_h:02d}:00‑{end_h:02d}:00"
-
-    # Currently in the display cluster's window
-    if current_cluster is display_cluster and now.hour in display_cluster:
-        if is_live:
-            return {"state": "live_range", "text_key": "live_forecast_dialog.status_live", "text": range_str, "color": "#E53935", "prefix": "🔴 "}
-        minutes_into = (now.hour - first_h) * 60 + now.minute
-        if minutes_into <= 15:
-            return {"state": "expected", "text_key": "live_forecast_dialog.status_expected", "text": "", "color": "#FF9800", "prefix": "⏳ "}
-        return {"state": "delayed", "text_key": "live_forecast_dialog.status_delayed", "text": "", "color": "#FF5252", "prefix": "⚠ "}
-
-    # Countdown: display_hour is the next hour
-    if display_hour == (now.hour + 1) % 24:
-        minutes_left = 60 - now.minute
-        return {"state": "countdown", "text_key": "live_forecast_dialog.status_countdown", "color": "#4CAF50", "prefix": "⏱ ", "args": {"minutes": minutes_left}}
-
-    # Far from display window
-    return {"state": "upcoming", "text": f"{first_h:02d}:00", "color": ""}
+    return Precog.time_state(recording)
 
 
 def _get_confidence_color(confidence: str, colors: dict) -> str:
