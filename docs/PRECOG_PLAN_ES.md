@@ -173,7 +173,7 @@ Objetivo:
 - reducir acceso directo a `HistoryManager`,
 - comprobar que Precog sirve como punto de entrada estable.
 
-**Siguiente candidato recomendado**: `app/qt/components/recording_card.py`
+**Resultado real tras la migración**: los tres consumidores de lectura de bajo riesgo ya quedaron migrados y este paso puede considerarse cerrado.
 
 ## Paso 3 — Migrar `live_forecast_dialog.py`
 
@@ -218,11 +218,82 @@ Verificación ejecutada:
 
 ## Paso 5 — Consolidación
 
+**Estado**: 🟡 en progreso.
+
 Cuando los consumidores ya usen Precog:
 
 - dejar `HistoryManager` como dependencia interna,
 - reducir nuevos accesos directos desde UI o manager,
 - evaluar siguientes limpiezas sin cambiar comportamiento.
+
+### Consolidación aplicada en Precog v1.1
+
+Se detectó que todavía sobrevivía una duplicación de regla de negocio fuera de Precog:
+
+- la traducción de `interval_seconds -> queue key (F/M/S)` seguía reimplementada en UI.
+
+Para cerrar esa grieta sin cambiar semántica se hizo un ajuste mínimo:
+
+- `Precog.interval_to_queue_key(interval_seconds)` pasa a ser la regla canónica,
+- `Precog.decide_queue()` delega en ese helper,
+- `recording_card.py` y `recordings_view.py` dejan de reconstruir la cola con `if/elif` inline y consumen la regla centralizada.
+
+Archivos afectados en esta consolidación:
+
+- `app/core/recording/precog.py`
+- `app/qt/components/recording_card.py`
+- `app/qt/views/recordings_view.py`
+
+Verificación ejecutada:
+
+- `python -m unittest tests.test_precog -v` → OK (20 tests)
+
+## Paso 6 — Snapshot unificado de Precog
+
+**Estado**: ⏳ pendiente de diseño/implementación.
+
+La siguiente evolución alineada con `PRECOG_EXPLORATION_ES.md` no es seguir sumando helpers sueltos, sino introducir un snapshot canónico que reúna en una sola foto coherente:
+
+- predicción,
+- decisión operativa,
+- estado consumible por UI.
+
+### Propuesta mínima actual
+
+Crear un `PrecogSnapshot` y un nuevo punto de entrada:
+
+- `Precog.snapshot(recording, now=None) -> PrecogSnapshot`
+
+Campos iniciales previstos para el snapshot:
+
+- `likelihood`
+- `confidence`
+- `forecast_details`
+- `reason_key`
+- `adjusted_interval`
+- `queue_key`
+- `should_check`
+- `time_state`
+- `is_stale`
+- `priority_score`
+- `consistency_score`
+
+### Objetivo de esta fase
+
+- dejar una sola fuente de verdad por ciclo,
+- reducir recomputación y diferencias entre manager/UI,
+- preparar el camino para futuras notificaciones de cambios hacia UI,
+- mantener compatibilidad con `predict()`, `decide_queue()` y `time_state()` como wrappers o helpers derivados.
+
+### Checklist de Precog v1.2
+
+- [ ] Definir el `dataclass PrecogSnapshot` con el shape mínimo acordado
+- [ ] Implementar `Precog.snapshot(recording, now=None)` reutilizando la lógica actual
+- [ ] Mantener `Precog.predict()`, `Precog.decide_queue()` y `Precog.time_state()` compatibles durante la transición
+- [ ] Migrar un consumidor chico para validar el enfoque (`recording_card.py` o `recordings_view.py`)
+- [ ] Evaluar si `record_manager.py` puede leer parte de la decisión desde el snapshot sin cambiar comportamiento
+- [ ] Documentar claramente qué campos del snapshot son semántica de negocio y cuáles siguen siendo presentación
+- [ ] Dejar anotado el nuevo punto de reentrada tras esa fase
 
 ## Estado actual
 
@@ -240,15 +311,19 @@ Cuando los consumidores ya usen Precog:
 - [x] Migrar decisión operativa de cola a Precog
 - [x] Implementar `Precog.time_state()` y absorber `_get_forecast_time_info()`
 - [x] Eliminar import residual de `HistoryManager` en `live_forecast_dialog.py`
+- [x] Centralizar la regla `interval -> queue key` en Precog
+- [x] Eliminar duplicación de la cola `F/M/S` en UI principal
 - [ ] Evaluar limpieza posterior una vez centralizado
+- [ ] Diseñar e introducir `PrecogSnapshot` como snapshot unificado
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. revisar si queda algún consumidor directo de `HistoryManager` fuera de Precog (buscar imports directos en UI y managers),
-2. evaluar si es necesario mover `HistoryManager.get_forecast_details()` o `get_adjusted_interval()` dentro de Precog para reducir aún más la superficie de cambio,
-3. considerar si `Precog.time_state()` necesita evolucionar (por ejemplo, añadir horizontes o razones) según nuevas necesidades de UI.
+1. definir el shape mínimo de `PrecogSnapshot`,
+2. implementarlo sin romper la API actual,
+3. migrar un consumidor pequeño para validar el enfoque,
+4. después evaluar si conviene avanzar hacia notificaciones de cambios Precog → UI.
 
 ## Referencias
 
