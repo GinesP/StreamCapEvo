@@ -186,19 +186,14 @@ def is_current_time_within_range(time_range_str: str):
         return start_time <= now <= end_time
 
 
-def is_time_interval_exceeded(last_check_time, interval_seconds=60):
-    """
-    Check if the time interval between the current time and the last check time exceeds the specified seconds.
-
-    :param last_check_time: The time of the last check. type: datetime.Time
-    :param interval_seconds: The time interval in seconds. Default is 60 seconds. type: int
-    :return: Returns True if the time interval exceeds the specified seconds, otherwise returns False.
-    """
-    now = datetime.now().time()
+def is_time_interval_exceeded(last_check_time, interval_seconds=60, now=None):
+    """Return whether the elapsed time since *last_check_time* exceeds *interval_seconds*."""
+    now_dt = now or datetime.now()
+    now = now_dt.time()
     if not last_check_time or last_check_time > now:
         return True
-    last_check_datetime = datetime.combine(datetime.today(), last_check_time)
-    time_diff = datetime.combine(datetime.today(), now) - last_check_datetime
+    last_check_datetime = datetime.combine(now_dt.date(), last_check_time)
+    time_diff = datetime.combine(now_dt.date(), now) - last_check_datetime
     return time_diff.total_seconds() > interval_seconds
 
 

@@ -1,6 +1,8 @@
 import random
 from datetime import datetime, timedelta
+
 from ...models.recording.recording_model import Recording
+
 
 class HistoryManager:
     @staticmethod
@@ -54,8 +56,6 @@ class HistoryManager:
                 nearest_distance = distance
                 nearest_minute = start_minutes
 
-            # Prefer FUTURE sessions for UI display, fall back to overall nearest.
-            # Sessions within the last 15 minutes still count as "current window".
             if day_match:
                 minutes_ahead = (start_minutes - current_minutes + 1440) % 1440
                 if minutes_ahead >= 1440 - 15:
@@ -80,7 +80,6 @@ class HistoryManager:
         avg_duration = int(sum(durations) / len(durations)) if durations else 60
         avg_delay = int(sum(delays) / len(delays)) if delays else None
 
-        # Use future-facing minute for display; fall back to circular nearest
         display_minute = nearest_display_minute if nearest_display_minute is not None else nearest_minute
 
         window_text = ""
@@ -139,8 +138,7 @@ class HistoryManager:
         return windows
 
     @staticmethod
-    def _cluster_hours(hours: list[int], max_gap: int = 4) -> list[list[int]]:
-        """Agrupa horas donde el gap entre consecutivas <= max_gap (default: 4h)."""
+    def cluster_hours(hours: list[int], max_gap: int = 4) -> list[list[int]]:
         if not hours:
             return []
         sorted_h = sorted(set(hours))
@@ -150,6 +148,12 @@ class HistoryManager:
                 clusters.append([])
             clusters[-1].append(h)
         return clusters
+
+    @staticmethod
+    def _cluster_info(active_hours: list[int], display_hour: int) -> tuple[list[list[int]], list[int], int, int, int]:
+        clusters = HistoryManager.cluster_hours(active_hours)
+        target = next((c for c in clusters if display_hour in c), clusters[0])
+        return clusters, target, target[0], target[-1], (target[-1] + 1) % 24
 
     @staticmethod
     def get_forecast_details(
@@ -181,13 +185,11 @@ class HistoryManager:
         window_text = ""
 
         if active_hours:
-            # Score: use circular distance to nearest hour (unchanged)
             nearest_hour = min(active_hours, key=lambda hour: abs((hour * 60) - current_minutes))
             minute_distance = abs((nearest_hour * 60) - current_minutes)
             proximity = max(0.0, 1.0 - (minute_distance / 180.0))
             score = max(score, 0.25 + (proximity * 0.55))
 
-            # Display: prefer a future hour today, fall back to earliest tomorrow
             future_hours = [h for h in active_hours if h * 60 >= current_minutes]
             if future_hours:
                 display_hour = min(future_hours)
@@ -196,12 +198,7 @@ class HistoryManager:
             else:
                 display_hour = nearest_hour
 
-            clusters = HistoryManager._cluster_hours(active_hours)
-            # Window and next_slot MUST use the same display_hour cluster
-            target = next((c for c in clusters if display_hour in c), clusters[0])
-            first_h = target[0]
-            last_h = target[-1]
-            end_h = (last_h + 1) % 24
+            _, _, first_h, last_h, end_h = HistoryManager._cluster_info(active_hours, display_hour)
             window_text = f"{first_h:02d}:00-{end_h:02d}:00"
             next_slot_text = f"{display_hour:02d}:00"
 
@@ -222,9 +219,6 @@ class HistoryManager:
                 score = session_component
                 if session_stats["reason_key"]:
                     reason_key = session_stats["reason_key"]
-            # Usar ventana de sesiones SOLO si ambos campos están disponibles
-            # (minuto-grano), para no mezclar datos de sesiones con datos de
-            # historical_intervals.
             if session_stats["window_text"] and session_stats["next_slot_text"]:
                 window_text = session_stats["window_text"]
                 next_slot_text = session_stats["next_slot_text"]
@@ -309,27 +303,21 @@ class HistoryManager:
         """
         likelihood = HistoryManager.get_likelihood_score(recording)
 
-        # 1. High-confidence prediction: check fast
         if likelihood >= 0.9:
             target_interval = 60
 
-        # 2. Moderate-confidence: double frequency
         elif likelihood >= 0.5:
             target_interval = base_interval // 2
 
-        # 3. Deep Sleep: historically dead channels with LOW real-time likelihood
-        elif getattr(recording, 'priority_score', 0.0) < 0.01 and recording.live_check_count > 30:
+        elif getattr(recording, 'priority_score', 0.0) < 0.01 and getattr(recording, 'live_check_count', 0) > 30:
             target_interval = base_interval * 3
 
-        # 4. Unlikely to be live: slow down further
         elif likelihood <= 0.15:
             target_interval = int(base_interval * 1.5)
 
-        # 5. Default: neither likely nor dead
         else:
             target_interval = base_interval
 
-        # Apply 15% Jitter (Anti-Bot Pattern Randomization)
         jitter_min = int(target_interval * 0.85)
         jitter_max = int(target_interval * 1.15)
 
