@@ -3,17 +3,24 @@ Qt Manual Live Forecast Dialog — StreamCapEvo.
 Displays on-demand forecast of upcoming live streams.
 """
 
-from PySide6.QtCore import Qt, QSize
+from datetime import datetime
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QDialog, QVBoxLayout, QLabel, QPushButton,
-    QHBoxLayout, QScrollArea, QWidget, QFrame, QSizePolicy
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
 )
-from PySide6.QtGui import QColor
-from app.utils.i18n import tr
 
 from app.core.recording.precog import Precog
 from app.qt.themes.theme import theme_manager
-from datetime import datetime
+from app.utils.i18n import tr
 
 # Platform colors for badges
 _PLATFORM_COLORS = {
@@ -29,12 +36,14 @@ def _get_platform_color(platform: str | None) -> str:
     p_lower = platform.lower()
     return _PLATFORM_COLORS.get(p_lower, _PLATFORM_COLORS["default"])
 
-def _get_forecast_time_info(recording) -> dict:
-    """
-    Return dict with state, text_key, text, color, prefix for the forecast time column.
+_EMOJI_BY_STATE = {
+    "live_range": "\U0001f534 ",
+    "expected": "\u23f3 ",
+    "delayed": "\u26a0 ",
+    "countdown": "\u23f1 ",
+}
 
-    Delegado a ``Precog.time_state`` para mantener la lógica centralizada.
-    """
+def _get_forecast_time_info(recording) -> dict:
     return Precog.time_state(recording)
 
 
@@ -182,7 +191,8 @@ class ForecastItemWidget(QFrame):
             translated_text = tr(info["text_key"])
             if "args" in info:
                 translated_text = translated_text.format(**info["args"])
-            text = f"{info.get('prefix', '')}{translated_text} {info.get('text', '')}"
+            emoji = _EMOJI_BY_STATE.get(info.get("state", ""), "")
+            text = f"{emoji}{translated_text} {info.get('text', '')}"
         else:
             text = info.get("text", "")
             

@@ -151,8 +151,8 @@ class PrecogTimeStateTests(unittest.TestCase):
         self.assertEqual(result["text_key"], "live_forecast_dialog.status_live")
         self.assertEqual(result["text"], "20:00‑22:00")
         self.assertEqual(result["color"], "#E53935")
-        self.assertEqual(result["prefix"], "🔴 ")
-
+        self.assertEqual(result["prefix"], "")
+    
     def test_expected_when_minutes_into_cluster_low(self):
         recording = _make_recording(
             historical_intervals={"2": [20, 21]},
@@ -165,8 +165,8 @@ class PrecogTimeStateTests(unittest.TestCase):
         self.assertEqual(result["state"], "expected")
         self.assertEqual(result["text_key"], "live_forecast_dialog.status_expected")
         self.assertEqual(result["color"], "#FF9800")
-        self.assertEqual(result["prefix"], "⏳ ")
-
+        self.assertEqual(result["prefix"], "")
+    
     def test_delayed_when_minutes_into_cluster_high(self):
         recording = _make_recording(
             historical_intervals={"2": [20, 21]},
@@ -179,8 +179,8 @@ class PrecogTimeStateTests(unittest.TestCase):
         self.assertEqual(result["state"], "delayed")
         self.assertEqual(result["text_key"], "live_forecast_dialog.status_delayed")
         self.assertEqual(result["color"], "#FF5252")
-        self.assertEqual(result["prefix"], "⚠ ")
-
+        self.assertEqual(result["prefix"], "")
+    
     def test_countdown_when_next_hour_is_next(self):
         recording = _make_recording(
             historical_intervals={"2": [22]},  # Tuesday 22:00
@@ -192,7 +192,7 @@ class PrecogTimeStateTests(unittest.TestCase):
         self.assertEqual(result["state"], "countdown")
         self.assertEqual(result["text_key"], "live_forecast_dialog.status_countdown")
         self.assertEqual(result["color"], "#4CAF50")
-        self.assertEqual(result["prefix"], "⏱ ")
+        self.assertEqual(result["prefix"], "")
         self.assertEqual(result["args"], {"minutes": 45})
 
     def test_upcoming_when_far_from_window(self):
