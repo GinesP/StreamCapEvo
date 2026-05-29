@@ -28,13 +28,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.core.recording.precog import Precog
+from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.qt.components.recording_card import QtRecordingCard
 from app.qt.themes.theme import QUEUE_COLORS, theme_manager
 from app.qt.utils.elevation import apply_elevation
 from app.qt.utils.filters import RecordingFilters
 from app.qt.utils.iconography import apply_button_icon, icon_pixmap
 from app.qt.utils.typography import body_font
-from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.utils.i18n import tr
 from app.utils.logger import logger
 
@@ -110,7 +111,11 @@ class RecordingListDelegate(QStyledItemDelegate):
         tooltips = {
             "folder": self._card_l.get("open_folder", "Open Folder"),
             "stop_monitoring": self._card_l.get("stop_monitor", "Stop Monitoring"),
-            "favorite": self._card_l.get("unfavorite", "Remove from favorites") if bool(getattr(rec, "is_favorite", False)) else self._card_l.get("favorite", "Mark as favorite"),
+            "favorite": (
+                self._card_l.get("unfavorite", "Remove from favorites")
+                if bool(getattr(rec, "is_favorite", False))
+                else self._card_l.get("favorite", "Mark as favorite")
+            ),
             "preview": "Preview",
             "edit": self._card_l.get("edit_record_config", "Edit"),
             "info": self._card_l.get("recording_info", "Info"),
@@ -249,7 +254,11 @@ class RecordingListDelegate(QStyledItemDelegate):
         x = row_rect.right() - 34
         rects: list[tuple[str, str, QRect]] = []
         for action, icon_name in reversed(cls.ACTIONS):
-            if action == "stop_monitoring" and not (rec is not None and RecordingStateLogic.should_show_stop_monitoring_action(rec)):
+            should_skip = (
+                action == "stop_monitoring"
+                and (rec is None or not RecordingStateLogic.should_show_stop_monitoring_action(rec))
+            )
+            if should_skip:
                 continue
             actual_icon = icon_name
             if action == "play" and rec is not None:
@@ -283,17 +292,12 @@ class RecordingListDelegate(QStyledItemDelegate):
     @staticmethod
     def _queue_badge(rec) -> tuple[str, str]:
         interval = getattr(rec, "loop_time_seconds", 60) or 60
-        if interval <= 60:
-            return "F", QUEUE_COLORS["fast"]
-        if interval <= 180:
-            return "M", QUEUE_COLORS["medium"]
-        return "S", QUEUE_COLORS["slow"]
+        qk = Precog.interval_to_queue_key(interval)
+        return qk, {"F": QUEUE_COLORS["fast"], "M": QUEUE_COLORS["medium"], "S": QUEUE_COLORS["slow"]}[qk]
 
     @staticmethod
     def _likelihood(rec) -> float:
         try:
-            from app.core.recording.precog import Precog
-
             return Precog.predict(rec).likelihood
         except Exception:
             return 0.0

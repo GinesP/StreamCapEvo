@@ -291,7 +291,15 @@
     "favorite_badge": "★",
     "favorite_badge_tip": "Favorite: never goes to slow queue",
     "stale_badge": "30D",
-    "stale_badge_tip": "Not seen live for over 30 days"
+    "stale_badge_tip": "Not seen live for over 30 days",
+    "preview": "Preview",
+    "unknown": "Unknown",
+    "idle": "Idle",
+    "queue_badge_tip": "Queue speed",
+    "likelihood_with_score": "Likelihood {score}",
+    "confirm_delete_title": "Confirm Delete",
+    "confirm_delete_body": "Are you sure you want to delete '{streamer_name}'?",
+    "confirm_delete_detail": "This will stop any active recordings for this stream."
   },
   "settings_page": {
     "recording_settings": "Recording Settings",

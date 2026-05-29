@@ -30,31 +30,36 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, QRect, QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QBrush, QPen, QPainterPath
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
 )
 
+from app.core.recording.precog import Precog
+from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.models.recording.recording_status_model import CardStateType
-from app.utils.logger import logger
-from app.utils.i18n import tr
 from app.qt.themes.theme import theme_manager
 from app.qt.utils.iconography import apply_button_icon
 from app.qt.utils.typography import body_font
-from app.core.recording.recording_state_logic import RecordingStateLogic
+from app.utils.i18n import tr
+from app.utils.logger import logger
 
 # ── Palette ───────────────────────────────────────────────────────────────────
 
 # These are state-specific accents
 _STATUS_COLOR: dict[CardStateType, str] = {
-    CardStateType.RECORDING: "#F44336", # Red for recording
-    CardStateType.ERROR:     "#FF9800", # Orange for error
-    CardStateType.LIVE:      "#4CAF50", # Green for live
-    CardStateType.OFFLINE:   "#9E9E9E", # Grey for offline
-    CardStateType.STOPPED:   "#607D8B", # Blue-grey for stopped
-    CardStateType.CHECKING:  "#2196F3", # Blue for checking
+    CardStateType.RECORDING: "#F44336",
+    CardStateType.ERROR:     "#FF9800",
+    CardStateType.LIVE:      "#4CAF50",
+    CardStateType.OFFLINE:   "#9E9E9E",
+    CardStateType.STOPPED:   "#607D8B",
+    CardStateType.CHECKING:  "#2196F3",
 }
 
 
@@ -130,11 +135,11 @@ def _mk_btn(icon_name: str, tip: str, parent: QWidget) -> QPushButton:
             margin: 0;
         }}
         QPushButton:hover {{
-            background: {accent}33; /* 20% opacity accent */
+            background: {accent}33;
             color: {accent};
         }}
         QPushButton:pressed {{
-            background: {accent}66; /* 40% opacity accent */
+            background: {accent}66;
         }}
     """)
     return b
@@ -143,15 +148,29 @@ def _mk_btn(icon_name: str, tip: str, parent: QWidget) -> QPushButton:
 # ── Card ──────────────────────────────────────────────────────────────────────
 
 _ACTION_DEFS = [
-    ("folder", "folder", "Open Folder"),
-    ("play", "play", "Start / Stop"),
-    ("stop_monitoring", "pause", "Stop Monitoring"),
-    ("favorite", "favorite_off", "Toggle Favorite"),
-    ("preview", "preview", "Preview"),
-    ("edit", "edit", "Edit"),
-    ("info", "info", "Info"),
-    ("delete", "delete", "Delete"),
+    ("folder", "folder"),
+    ("play", "play"),
+    ("stop_monitoring", "pause"),
+    ("favorite", "favorite_off"),
+    ("preview", "preview"),
+    ("edit", "edit"),
+    ("info", "info"),
+    ("delete", "delete"),
 ]
+
+
+def _action_tip(name: str) -> str:
+    tips = {
+        "folder":          tr("recording_card.open_folder", default="Open Folder"),
+        "play":            tr("recording_card.start_monitor", default="Start Monitoring"),
+        "stop_monitoring": tr("recording_card.stop_monitor", default="Stop Monitoring"),
+        "favorite":        tr("recording_card.favorite", default="Mark as favorite"),
+        "preview":         tr("recording_card.preview", default="Preview"),
+        "edit":            tr("recording_card.edit_record_config", default="Edit Recording Configuration"),
+        "info":            tr("recording_card.recording_info", default="Recording Information"),
+        "delete":          tr("recording_card.delete_monitor", default="Delete Monitoring"),
+    }
+    return tips.get(name, "")
 
 
 class QtRecordingCard(QFrame):
@@ -264,8 +283,8 @@ class QtRecordingCard(QFrame):
         ab.setSpacing(3)
 
         self._g_btns: dict[str, QPushButton] = {}
-        for name, icon_key, tip in _ACTION_DEFS:
-            btn = _mk_btn(icon_key, tip, self._g_actions)
+        for name, icon_key in _ACTION_DEFS:
+            btn = _mk_btn(icon_key, _action_tip(name), self._g_actions)
             btn.clicked.connect(lambda _, n=name: self._on_action(n))
             ab.addWidget(btn)
             self._g_btns[name] = btn
@@ -326,8 +345,8 @@ class QtRecordingCard(QFrame):
         btn_lay.setSpacing(3)
 
         self._l_btns: dict[str, QPushButton] = {}
-        for name, icon_key, tip in _ACTION_DEFS:
-            btn = _mk_btn(icon_key, tip, btn_w)
+        for name, icon_key in _ACTION_DEFS:
+            btn = _mk_btn(icon_key, _action_tip(name), btn_w)
             btn.clicked.connect(lambda _, n=name: self._on_action(n))
             btn_lay.addWidget(btn)
             self._l_btns[name] = btn
@@ -366,7 +385,7 @@ class QtRecordingCard(QFrame):
         self._status_color = color
 
         # Title
-        name = rec.streamer_name or "Unknown"
+        name = rec.streamer_name or tr("recording_card.unknown", default="Unknown")
         if RecordingStateLogic.should_show_live_title(rec):
             name = f"{rec.streamer_name} — {rec.live_title}"
 
@@ -387,7 +406,7 @@ class QtRecordingCard(QFrame):
             self._l_av.set_letter(letter, color)
             self._last_av_state = (letter, color)
 
-        status_text = rec.status_info or "Idle"
+        status_text = rec.status_info or tr("recording_card.idle", default="Idle")
         if self._g_status.text() != status_text:
             self._g_status.setText(status_text)
             self._l_status.setText(status_text)
@@ -403,7 +422,7 @@ class QtRecordingCard(QFrame):
             self._l_dur.setText(dur_t)
 
         added = getattr(rec, "added_at", "")
-        added_text = f"Added: {added}" if added else ""
+        added_text = f"{tr('recording_card.added_at', default='Added at')}: {added}" if added else ""
         if self._g_dates.text() != added_text:
             self._g_dates.setText(added_text)
 
@@ -414,11 +433,11 @@ class QtRecordingCard(QFrame):
         stop_monitor_btn_l = self._l_btns.get("stop_monitoring")
         
         if RecordingStateLogic.is_actively_recording(rec):
-            icon_key, tip = "stop", "Stop Recording"
+            icon_key, tip = "stop", tr("recording_card.stop_record", default="Stop Recording")
         elif rec.monitor_status:
-            icon_key, tip = "pause", "Stop Monitoring"
+            icon_key, tip = "pause", tr("recording_card.stop_monitor", default="Stop Monitoring")
         else:
-            icon_key, tip = "play", "Start Monitoring"
+            icon_key, tip = "play", tr("recording_card.start_monitor", default="Start Monitoring")
             
         if play_btn_g:
             apply_button_icon(play_btn_g, icon_key, size=14, color=theme_manager.get_color("text_sec"))
@@ -430,10 +449,10 @@ class QtRecordingCard(QFrame):
         show_stop_monitoring = RecordingStateLogic.should_show_stop_monitoring_action(rec)
         if stop_monitor_btn_g:
             stop_monitor_btn_g.setVisible(show_stop_monitoring)
-            stop_monitor_btn_g.setToolTip("Stop Monitoring")
+            stop_monitor_btn_g.setToolTip(tr("recording_card.stop_monitor", default="Stop Monitoring"))
         if stop_monitor_btn_l:
             stop_monitor_btn_l.setVisible(show_stop_monitoring)
-            stop_monitor_btn_l.setToolTip("Stop Monitoring")
+            stop_monitor_btn_l.setToolTip(tr("recording_card.stop_monitor", default="Stop Monitoring"))
 
         favorite_btn_g = self._g_btns.get("favorite")
         favorite_btn_l = self._l_btns.get("favorite")
@@ -461,15 +480,11 @@ class QtRecordingCard(QFrame):
     def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
         interval = getattr(rec, "loop_time_seconds", 60) or 60
         is_stale = RecordingStateLogic.is_stale(rec)
-        q_t, q_c = (
-            ("F", "#4CAF50") if interval <= 60 else
-            ("M", "#FF9800") if interval <= 180 else
-            ("S", "#F44336")
-        )
+        q_t = Precog.interval_to_queue_key(interval)
+        q_c = {"F": "#4CAF50", "M": "#FF9800", "S": "#F44336"}[q_t]
 
         score = 0
         try:
-            from app.core.recording.precog import Precog
             score = Precog.predict(rec).likelihood
         except Exception:
             pass
@@ -486,12 +501,20 @@ class QtRecordingCard(QFrame):
                 w.setParent(None)  # safe deletion in layout context
                 w.deleteLater()
 
-        layout.addWidget(_Badge(q_t, q_c, "Queue speed"))
+        layout.addWidget(_Badge(q_t, q_c, tr("recording_card.queue_badge_tip", default="Queue speed")))
 
         if score > 0:
-            l_t = "High" if score >= 0.8 else "Normal"
+            l_t = (
+                tr("recording_card.likelihood_high", default="High")
+                if score >= 0.8
+                else tr("recording_card.likelihood_normal", default="Normal")
+            )
             l_c = "#4CAF50" if score >= 0.8 else "#42A5F5"
-            layout.addWidget(_Badge(l_t, l_c, f"Likelihood {score:.0%}"))
+            badge_tip = tr(
+                "recording_card.likelihood_with_score",
+                default="Likelihood {score}",
+            ).format(score=f"{score:.0%}")
+            layout.addWidget(_Badge(l_t, l_c, badge_tip))
 
         if is_stale:
             layout.addWidget(
@@ -644,10 +667,16 @@ class QtRecordingCard(QFrame):
         elif name == "delete":
             from app.qt.components.confirm_dialog import QtConfirmDialog
             if QtConfirmDialog.confirm(
-                self, 
-                "Confirm Delete", 
-                f"Are you sure you want to delete '{rec.streamer_name}'?",
-                "This will stop any active recordings for this stream.",
+                self,
+                tr("recording_card.confirm_delete_title", default="Confirm Delete"),
+                tr(
+                    "recording_card.confirm_delete_body",
+                    default="Are you sure you want to delete '{streamer_name}'?",
+                ).format(streamer_name=rec.streamer_name),
+                tr(
+                    "recording_card.confirm_delete_detail",
+                    default="This will stop any active recordings for this stream.",
+                ),
                 type="danger"
             ):
                 self.app.event_bus.run_task(
@@ -655,7 +684,11 @@ class QtRecordingCard(QFrame):
                 )
                 self.app.event_bus.publish("delete", rec)
                 if hasattr(self.app.main_window, "show_toast"):
-                    self.app.main_window.show_toast(tr("toast.deleted_stream", default="Deleted: {streamer_name}").format(streamer_name=rec.streamer_name), "info")
+                    msg = tr(
+                        "toast.deleted_stream",
+                        default="Deleted: {streamer_name}",
+                    ).format(streamer_name=rec.streamer_name)
+                    self.app.main_window.show_toast(msg, "info")
 
         elif name == "edit":
             self._open_edit_dialog()

@@ -291,7 +291,15 @@
         "favorite_badge": "★",
         "favorite_badge_tip": "Favorito: nunca pasa a la cola lenta",
         "stale_badge": "30D",
-        "stale_badge_tip": "No se ha visto en vivo en más de 30 días"
+        "stale_badge_tip": "No se ha visto en vivo en más de 30 días",
+        "preview": "Vista previa",
+        "unknown": "Desconocido",
+        "idle": "Inactivo",
+        "queue_badge_tip": "Velocidad de cola",
+        "likelihood_with_score": "Probabilidad {score}",
+        "confirm_delete_title": "Confirmar eliminación",
+        "confirm_delete_body": "¿Está seguro de que desea eliminar '{streamer_name}'?",
+        "confirm_delete_detail": "Esto detendrá cualquier grabación activa para este stream."
     },
     "settings_page": {
         "recording_settings": "Ajustes de Grabación",
