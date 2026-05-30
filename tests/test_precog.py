@@ -384,6 +384,38 @@ class PrecogSnapshotTests(unittest.TestCase):
         self.assertEqual(snap.adjusted_interval, 180)
         self.assertEqual(snap.queue_key, "M")
 
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_fields_match_decide_queue_for_record_manager_pattern(self, _mock_rand):
+        """When recording.loop_time_seconds == base_interval, snapshot fields
+        consumed by record_manager match decide_queue fields exactly."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        base_interval = 300
+        recording.loop_time_seconds = base_interval
+
+        snap = Precog.snapshot(recording, now=now)
+        dec = Precog.decide_queue(recording, base_interval=base_interval, now=now)
+
+        self.assertEqual(snap.adjusted_interval, dec.adjusted_interval)
+        self.assertEqual(snap.likelihood, dec.likelihood)
+        self.assertEqual(snap.should_check, dec.should_check)
+        self.assertEqual(snap.queue_key, dec.queue_key)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=60)
+    def test_snapshot_fields_match_for_fast_queue_with_live(self, _mock_rand):
+        """Live streamer gets fast queue via snapshot, same as decide_queue."""
+        recording = _make_recording()
+        recording.is_live = True
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        recording.loop_time_seconds = 300
+
+        snap = Precog.snapshot(recording, now=now)
+        dec = Precog.decide_queue(recording, base_interval=300, now=now)
+
+        self.assertEqual(snap.should_check, dec.should_check)
+        self.assertEqual(snap.queue_key, dec.queue_key)
+        self.assertEqual(snap.likelihood, dec.likelihood)
+
 
 if __name__ == "__main__":
     unittest.main()

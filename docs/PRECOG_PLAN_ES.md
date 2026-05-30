@@ -323,7 +323,7 @@ Nota: `forecast_details` sigue mezclando datos predictivos con algunos campos pe
 - [x] Implementar `Precog.snapshot(recording, now=None)` reutilizando la lógica actual
 - [x] Mantener `Precog.predict()`, `Precog.decide_queue()` y `Precog.time_state()` compatibles durante la transición
 - [x] Migrar un consumidor chico para validar el enfoque (`recording_card.py`)
-- [ ] Evaluar si `record_manager.py` puede leer parte de la decisión desde el snapshot sin cambiar comportamiento
+- [x] Evaluar si `record_manager.py` puede leer parte de la decisión desde el snapshot sin cambiar comportamiento
 - [x] Documentar claramente qué campos del snapshot son semántica de negocio y cuáles siguen siendo presentación
 - [x] Dejar anotado el nuevo punto de reentrada tras esa fase
 
@@ -338,6 +338,28 @@ Nota: `forecast_details` sigue mezclando datos predictivos con algunos campos pe
 
 - `python -m unittest tests.test_precog` → OK
 - `python -m unittest discover` → OK en tests del proyecto; persisten errores de entorno ya conocidos por dependencias faltantes (`aiofiles`, `qasync`)
+
+## Paso 7 — Migrar decisión operativa de `record_manager.py` a `Precog.snapshot()`
+
+**Estado**: ✅ completado.
+
+`record_manager.py` ya no llama a `Precog.decide_queue()` directamente desde `check_all_live_status`. En su lugar lee del snapshot unificado:
+
+- `Precog.snapshot(recording, now=None)` es el nuevo punto de entrada.
+- Ajusta `recording.loop_time_seconds = base_interval` antes del snapshot para que el cómputo interno de `adjusted_interval` use la misma base de siempre (proveniente de configuración de usuario).
+- Lee `snap.adjusted_interval`, `snap.likelihood`, `snap.should_check`, `snap.queue_key` — exactamente los mismos campos que antes venían de `PrecogDecision`.
+
+Archivos afectados:
+
+- `app/core/recording/record_manager.py` — el bloque de decisión ahora consume snapshot
+- `tests/test_precog.py` — tests de contrato que prueban equivalencia snapshot ↔ decide_queue con `recording.loop_time_seconds = base_interval`
+- `tests/test_record_manager_precog.py` — tests de integración que verifican que `check_all_live_status` lee de snapshot
+
+Verificación ejecutada:
+
+- `python -m unittest tests.test_precog` → OK
+- `python -m unittest tests.test_record_manager_precog` → OK
+- `python -m unittest discover` → OK (tests del proyecto; persisten errores de entorno conocidos)
 
 ## Estado actual
 
@@ -359,15 +381,15 @@ Nota: `forecast_details` sigue mezclando datos predictivos con algunos campos pe
 - [x] Eliminar duplicación de la cola `F/M/S` en UI principal
 - [ ] Evaluar limpieza posterior una vez centralizado
 - [x] Diseñar e introducir `PrecogSnapshot` como snapshot unificado
+- [x] Migrar `record_manager.py` a snapshot unificado
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. evaluar si `record_manager.py` debe consumir parte del `PrecogSnapshot` sin cambiar comportamiento,
-2. revisar si conviene migrar `recordings_view.py` a snapshot para seguir reduciendo recomputación,
-3. decidir si hace falta un cómputo interno compartido/cache privado para evitar trabajo duplicado dentro de `snapshot()`,
-4. recién después evaluar notificaciones de cambios Precog → UI.
+1. revisar si conviene migrar `recordings_view.py` a snapshot para seguir reduciendo recomputación,
+2. decidir si hace falta un cómputo interno compartido/cache privado para evitar trabajo duplicado dentro de `snapshot()`,
+3. recién después evaluar notificaciones de cambios Precog → UI.
 
 ## Referencias
 

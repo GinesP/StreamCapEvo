@@ -437,12 +437,13 @@ class RecordingManager:
             # 1. Apply Smart Predictive Polling (Intelligence)
             from .precog import Precog
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
-            decision = Precog.decide_queue(recording, base_interval=base_interval)
-            recording.loop_time_seconds = decision.adjusted_interval
-            likelihood = decision.likelihood
+            recording.loop_time_seconds = base_interval
+            snap = Precog.snapshot(recording, now=None)
+            recording.loop_time_seconds = snap.adjusted_interval
+            likelihood = snap.likelihood
 
-            if decision.should_check:
-                prio_key = decision.queue_key
+            if snap.should_check:
+                prio_key = snap.queue_key
 
                 # 4. Prevent redundant queuing if already checking or in queue
                 if recording.is_checking:
