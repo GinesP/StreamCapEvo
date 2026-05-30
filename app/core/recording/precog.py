@@ -2,9 +2,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from .history_manager import HistoryManager
 from ...models.recording.recording_model import Recording
 from ...utils.utils import is_time_interval_exceeded
+from .history_manager import HistoryManager
+from .recording_state_logic import RecordingStateLogic
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,23 @@ class PrecogDecision:
     adjusted_interval: int
     likelihood: float
     reason: str
+
+
+@dataclass(frozen=True)
+class PrecogSnapshot:
+    """Unified snapshot of a recording's predictive state at a point in time."""
+
+    likelihood: float
+    confidence: str
+    forecast_details: dict[str, Any]
+    reason_key: str
+    adjusted_interval: int
+    queue_key: str
+    should_check: bool
+    time_state: dict[str, Any]
+    is_stale: bool
+    priority_score: float
+    consistency_score: float
 
 
 class Precog:
@@ -111,6 +129,30 @@ class Precog:
             }
 
         return {"state": "upcoming", "text": f"{first_h:02d}:00", "text_key": "", "color": ""}
+
+    @staticmethod
+    def snapshot(recording: Recording, now: datetime | None = None) -> PrecogSnapshot:
+        """Return a unified snapshot of predictive state for *recording* at *now*."""
+        now = now or datetime.now()
+        prediction = Precog.predict(recording, now=now)
+        base_interval = getattr(recording, "loop_time_seconds", None) or Precog.DEFAULT_BASE_INTERVAL
+        decision = Precog.decide_queue(recording, base_interval=base_interval, now=now)
+        ts = Precog.time_state(recording, now=now)
+        stale = RecordingStateLogic.is_stale(recording, now=now)
+
+        return PrecogSnapshot(
+            likelihood=prediction.likelihood,
+            confidence=prediction.confidence,
+            forecast_details=prediction.forecast_details,
+            reason_key=decision.reason,
+            adjusted_interval=decision.adjusted_interval,
+            queue_key=decision.queue_key,
+            should_check=decision.should_check,
+            time_state=ts,
+            is_stale=stale,
+            priority_score=prediction.priority_score,
+            consistency_score=prediction.consistency_score,
+        )
 
     @staticmethod
     def interval_to_queue_key(interval_seconds: int) -> str:

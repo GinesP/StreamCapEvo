@@ -478,16 +478,17 @@ class QtRecordingCard(QFrame):
 
     @staticmethod
     def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
-        interval = getattr(rec, "loop_time_seconds", 60) or 60
-        is_stale = RecordingStateLogic.is_stale(rec)
-        q_t = Precog.interval_to_queue_key(interval)
-        q_c = {"F": "#4CAF50", "M": "#FF9800", "S": "#F44336"}[q_t]
-
-        score = 0
         try:
-            score = Precog.predict(rec).likelihood
+            snap = Precog.snapshot(rec)
+            q_t = snap.queue_key
+            q_c = {"F": "#4CAF50", "M": "#FF9800", "S": "#F44336"}[q_t]
+            score = snap.likelihood
+            is_stale = snap.is_stale
         except Exception:
-            pass
+            q_t = "?"
+            q_c = "#9E9E9E"
+            score = 0.0
+            is_stale = False
 
         cache_attr = f"_badge_state_{prefix}"
         current_state = (q_t, q_c, score, is_stale)

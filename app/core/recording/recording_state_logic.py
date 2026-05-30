@@ -78,14 +78,15 @@ class RecordingStateLogic:
         return dt
 
     @classmethod
-    def is_stale(cls, recording, days: int = 30) -> bool:
+    def is_stale(cls, recording, days: int = 30, now: datetime | None = None) -> bool:
         """True when a stream has not been seen live for >days.
 
         If `last_seen_live` is missing, falls back to `added_at`.
+        Uses `now` as the time basis (defaults to `datetime.now()`).
         """
         reference = cls._parse_datetime(getattr(recording, "last_seen_live", None))
         if reference is None:
             reference = cls._parse_datetime(getattr(recording, "added_at", None))
         if reference is None:
             return False
-        return (datetime.now() - reference) > timedelta(days=days)
+        return ((now or datetime.now()) - reference) > timedelta(days=days)

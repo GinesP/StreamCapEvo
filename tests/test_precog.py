@@ -3,7 +3,7 @@ from datetime import datetime
 from unittest.mock import patch
 
 from app.core.recording.history_manager import HistoryManager
-from app.core.recording.precog import Precog, PrecogPrediction
+from app.core.recording.precog import Precog, PrecogPrediction, PrecogSnapshot
 from app.models.recording.recording_model import Recording
 
 
@@ -284,6 +284,105 @@ class PrecogDecideQueueTests(unittest.TestCase):
         now = datetime(2026, 5, 27, 20, 0, 0)
         decision = Precog.decide_queue(recording, base_interval=300, now=now)
         self.assertTrue(decision.should_check)
+
+
+class PrecogSnapshotTests(unittest.TestCase):
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_returns_precogsnapshot(self, _mock_rand):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+
+        self.assertIsInstance(snap, PrecogSnapshot)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_likelihood_matches_predict(self, _mock_rand):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+        pred = Precog.predict(recording, now=now)
+
+        self.assertEqual(snap.likelihood, pred.likelihood)
+        self.assertEqual(snap.confidence, pred.confidence)
+        self.assertEqual(snap.priority_score, pred.priority_score)
+        self.assertEqual(snap.consistency_score, pred.consistency_score)
+        self.assertEqual(snap.forecast_details, pred.forecast_details)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_queue_fields_match_decide_queue(self, _mock_rand):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+
+        self.assertEqual(snap.queue_key, decision.queue_key)
+        self.assertEqual(snap.adjusted_interval, decision.adjusted_interval)
+        self.assertEqual(snap.should_check, decision.should_check)
+        self.assertEqual(snap.reason_key, decision.reason)
+
+    def test_snapshot_time_state_matches(self):
+        recording = _make_recording(
+            historical_intervals={"2": [20, 21]},
+        )
+        now = datetime(2026, 5, 27, 20, 30, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+        ts = Precog.time_state(recording, now=now)
+
+        self.assertEqual(snap.time_state, ts)
+
+    def test_snapshot_is_stale_false_for_new_recording(self):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+
+        self.assertFalse(snap.is_stale)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=60)
+    def test_snapshot_live_streamer_fast_queue(self, _mock_rand):
+        recording = _make_recording()
+        recording.is_live = True
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+
+        self.assertEqual(snap.likelihood, 1.0)
+        self.assertEqual(snap.queue_key, "F")
+        self.assertEqual(snap.confidence, "high")
+
+    def test_snapshot_reason_key_from_forecast(self):
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+
+        # reason_key should match forecast_details.reason_key
+        self.assertEqual(snap.reason_key, snap.forecast_details.get("reason_key", ""))
+
+    def test_snapshot_stale_uses_now_parameter(self):
+        """is_stale must use snapshot's `now` parameter, not datetime.now()."""
+        recording = _make_recording(
+            last_seen_live="2026-04-15 10:00:00",
+        )
+        now = datetime(2026, 5, 1, 20, 0, 0)
+        snap = Precog.snapshot(recording, now=now)
+        self.assertFalse(snap.is_stale)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=200)
+    def test_snapshot_favorite_caps_interval(self, _mock_rand):
+        recording = _make_recording()
+        recording.is_favorite = True
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+
+        # Favorite cap at 180 → M queue
+        self.assertEqual(snap.adjusted_interval, 180)
+        self.assertEqual(snap.queue_key, "M")
 
 
 if __name__ == "__main__":

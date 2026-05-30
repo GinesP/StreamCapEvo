@@ -250,7 +250,7 @@ Verificación ejecutada:
 
 ## Paso 6 — Snapshot unificado de Precog
 
-**Estado**: ⏳ pendiente de diseño/implementación.
+**Estado**: ✅ implementado.
 
 La siguiente evolución alineada con `PRECOG_EXPLORATION_ES.md` no es seguir sumando helpers sueltos, sino introducir un snapshot canónico que reúna en una sola foto coherente:
 
@@ -258,13 +258,13 @@ La siguiente evolución alineada con `PRECOG_EXPLORATION_ES.md` no es seguir sum
 - decisión operativa,
 - estado consumible por UI.
 
-### Propuesta mínima actual
+### Implementación mínima aplicada
 
 Crear un `PrecogSnapshot` y un nuevo punto de entrada:
 
 - `Precog.snapshot(recording, now=None) -> PrecogSnapshot`
 
-Campos iniciales previstos para el snapshot:
+Campos actuales del snapshot:
 
 - `likelihood`
 - `confidence`
@@ -285,15 +285,59 @@ Campos iniciales previstos para el snapshot:
 - preparar el camino para futuras notificaciones de cambios hacia UI,
 - mantener compatibilidad con `predict()`, `decide_queue()` y `time_state()` como wrappers o helpers derivados.
 
+### Resultado real de la implementación
+
+Se implementó `Precog.snapshot(recording, now=None)` como una composición conservadora de la API actual:
+
+- `Precog.predict()` aporta `likelihood`, `confidence`, `forecast_details`, `priority_score` y `consistency_score`.
+- `Precog.decide_queue()` aporta `adjusted_interval`, `queue_key`, `should_check` y `reason`.
+- `Precog.time_state()` aporta `time_state`.
+- `RecordingStateLogic.is_stale()` aporta `is_stale`.
+
+Esto permite introducir una foto canónica por ciclo sin reescribir todavía la lógica interna ni romper consumidores existentes.
+
+### Semántica de negocio vs presentación
+
+Campos principalmente de **semántica de negocio/operación**:
+
+- `likelihood`
+- `confidence`
+- `forecast_details`
+- `reason_key`
+- `adjusted_interval`
+- `queue_key`
+- `should_check`
+- `is_stale`
+- `priority_score`
+- `consistency_score`
+
+Campos principalmente **orientados al consumo de UI/presentación**:
+
+- `time_state`
+
+Nota: `forecast_details` sigue mezclando datos predictivos con algunos campos pensados para mostrar ventana/slot en UI. En esta fase NO se separó más para no cambiar comportamiento.
+
 ### Checklist de Precog v1.2
 
-- [ ] Definir el `dataclass PrecogSnapshot` con el shape mínimo acordado
-- [ ] Implementar `Precog.snapshot(recording, now=None)` reutilizando la lógica actual
-- [ ] Mantener `Precog.predict()`, `Precog.decide_queue()` y `Precog.time_state()` compatibles durante la transición
-- [ ] Migrar un consumidor chico para validar el enfoque (`recording_card.py` o `recordings_view.py`)
+- [x] Definir el `dataclass PrecogSnapshot` con el shape mínimo acordado
+- [x] Implementar `Precog.snapshot(recording, now=None)` reutilizando la lógica actual
+- [x] Mantener `Precog.predict()`, `Precog.decide_queue()` y `Precog.time_state()` compatibles durante la transición
+- [x] Migrar un consumidor chico para validar el enfoque (`recording_card.py`)
 - [ ] Evaluar si `record_manager.py` puede leer parte de la decisión desde el snapshot sin cambiar comportamiento
-- [ ] Documentar claramente qué campos del snapshot son semántica de negocio y cuáles siguen siendo presentación
-- [ ] Dejar anotado el nuevo punto de reentrada tras esa fase
+- [x] Documentar claramente qué campos del snapshot son semántica de negocio y cuáles siguen siendo presentación
+- [x] Dejar anotado el nuevo punto de reentrada tras esa fase
+
+### Archivos afectados en Precog v1.2
+
+- `app/core/recording/precog.py`
+- `app/qt/components/recording_card.py`
+- `tests/test_precog.py`
+- `tests/test_recording_card_badge.py`
+
+### Verificación ejecutada
+
+- `python -m unittest tests.test_precog` → OK
+- `python -m unittest discover` → OK en tests del proyecto; persisten errores de entorno ya conocidos por dependencias faltantes (`aiofiles`, `qasync`)
 
 ## Estado actual
 
@@ -314,16 +358,16 @@ Campos iniciales previstos para el snapshot:
 - [x] Centralizar la regla `interval -> queue key` en Precog
 - [x] Eliminar duplicación de la cola `F/M/S` en UI principal
 - [ ] Evaluar limpieza posterior una vez centralizado
-- [ ] Diseñar e introducir `PrecogSnapshot` como snapshot unificado
+- [x] Diseñar e introducir `PrecogSnapshot` como snapshot unificado
 
 ## Punto de reentrada para futuras sesiones
 
 Si retomamos este trabajo en otra sesión, el siguiente paso recomendado es:
 
-1. definir el shape mínimo de `PrecogSnapshot`,
-2. implementarlo sin romper la API actual,
-3. migrar un consumidor pequeño para validar el enfoque,
-4. después evaluar si conviene avanzar hacia notificaciones de cambios Precog → UI.
+1. evaluar si `record_manager.py` debe consumir parte del `PrecogSnapshot` sin cambiar comportamiento,
+2. revisar si conviene migrar `recordings_view.py` a snapshot para seguir reduciendo recomputación,
+3. decidir si hace falta un cómputo interno compartido/cache privado para evitar trabajo duplicado dentro de `snapshot()`,
+4. recién después evaluar notificaciones de cambios Precog → UI.
 
 ## Referencias
 
