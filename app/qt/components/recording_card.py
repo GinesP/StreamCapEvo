@@ -44,7 +44,7 @@ from PySide6.QtWidgets import (
 from app.core.recording.precog import Precog
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.models.recording.recording_status_model import CardStateType
-from app.qt.themes.theme import theme_manager
+from app.qt.themes.theme import QUEUE_COLORS, theme_manager
 from app.qt.utils.iconography import apply_button_icon
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
@@ -60,6 +60,12 @@ _STATUS_COLOR: dict[CardStateType, str] = {
     CardStateType.OFFLINE:   "#9E9E9E",
     CardStateType.STOPPED:   "#607D8B",
     CardStateType.CHECKING:  "#2196F3",
+}
+
+_QUEUE_BADGE_COLORS: dict[str, str] = {
+    "F": QUEUE_COLORS["fast"],
+    "M": QUEUE_COLORS["medium"],
+    "S": QUEUE_COLORS["slow"],
 }
 
 
@@ -387,7 +393,7 @@ class QtRecordingCard(QFrame):
         # Title
         name = rec.streamer_name or tr("recording_card.unknown", default="Unknown")
         if RecordingStateLogic.should_show_live_title(rec):
-            name = f"{rec.streamer_name} — {rec.live_title}"
+            name = f"{name} — {rec.live_title}"
 
         if self._g_name.text() != name:
             self._g_name.setText(name)
@@ -480,8 +486,8 @@ class QtRecordingCard(QFrame):
     def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
         try:
             snap = Precog.snapshot(rec)
-            q_t = snap.queue_key
-            q_c = {"F": "#4CAF50", "M": "#FF9800", "S": "#F44336"}[q_t]
+            q_t = Precog.stable_queue_key(rec)
+            q_c = _QUEUE_BADGE_COLORS[q_t]
             score = snap.likelihood
             is_stale = snap.is_stale
         except Exception:

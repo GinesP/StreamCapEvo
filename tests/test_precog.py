@@ -61,20 +61,17 @@ class PrecogPredictTests(unittest.TestCase):
         self.assertEqual(result.forecast_details, direct_forecast)
         self.assertEqual(result.adjusted_interval, direct_interval)
 
-    @patch("app.core.recording.history_manager.random.randint", return_value=120)
-    def test_predict_uses_recording_base_interval(self, mock_rand):
+    def test_predict_uses_recording_base_interval(self):
         recording = _make_recording()
         recording.loop_time_seconds = 180
-        recording.is_live = True  # force high likelihood → interval 60
         now = datetime(2026, 5, 27, 20, 0, 0)
 
         result = Precog.predict(recording, now=now)
 
-        # When live, get_adjusted_interval returns 60 regardless of base,
-        # but we can still assert the internal path was hit by verifying
-        # the mock was called with bounds derived from 60.
-        self.assertEqual(result.adjusted_interval, 120)
-        mock_rand.assert_called_once()
+        # With no history, likelihood <= 0.15 → target = base * 1.5 = 270.
+        # With 15% jitter, final interval is in [229, 310].
+        self.assertGreaterEqual(result.adjusted_interval, 229)
+        self.assertLessEqual(result.adjusted_interval, 310)
 
     @patch("app.core.recording.history_manager.random.randint", return_value=400)
     def test_predict_uses_default_base_interval_when_none(self, mock_rand):
@@ -149,7 +146,7 @@ class PrecogTimeStateTests(unittest.TestCase):
 
         self.assertEqual(result["state"], "live_range")
         self.assertEqual(result["text_key"], "live_forecast_dialog.status_live")
-        self.assertEqual(result["text"], "20:00‑22:00")
+        self.assertEqual(result["text"], "20:00-22:00")
         self.assertEqual(result["color"], "#E53935")
         self.assertEqual(result["prefix"], "")
     
@@ -415,6 +412,162 @@ class PrecogSnapshotTests(unittest.TestCase):
         self.assertEqual(snap.should_check, dec.should_check)
         self.assertEqual(snap.queue_key, dec.queue_key)
         self.assertEqual(snap.likelihood, dec.likelihood)
+
+
+class PrecogStableQueueKeyTests(unittest.TestCase):
+    def test_stable_queue_key_uses_loop_time_seconds(self):
+        """stable_queue_key must derive from loop_time_seconds directly."""
+        recording = _make_recording()
+        recording.loop_time_seconds = 180
+        self.assertEqual(Precog.stable_queue_key(recording), "M")
+
+    def test_stable_queue_key_fast_for_60(self):
+        recording = _make_recording()
+        recording.loop_time_seconds = 60
+        self.assertEqual(Precog.stable_queue_key(recording), "F")
+
+    def test_stable_queue_key_slow_for_300(self):
+        recording = _make_recording()
+        recording.loop_time_seconds = 300
+        self.assertEqual(Precog.stable_queue_key(recording), "S")
+
+    def test_stable_queue_key_defaults_to_60_when_none(self):
+        """When loop_time_seconds is None, stable_queue_key must fall back to 60 (legacy UI default)."""
+        recording = _make_recording()
+        recording.loop_time_seconds = None
+        self.assertEqual(Precog.stable_queue_key(recording), "F")
+
+    def test_stable_queue_key_medium_for_120(self):
+        recording = _make_recording()
+        recording.loop_time_seconds = 120
+        self.assertEqual(Precog.stable_queue_key(recording), "M")
+
+    def test_stable_queue_key_boundary_61_is_medium(self):
+        recording = _make_recording()
+        recording.loop_time_seconds = 61
+        self.assertEqual(Precog.stable_queue_key(recording), "M")
+
+    def test_stable_queue_key_boundary_181_is_slow(self):
+        recording = _make_recording()
+        recording.loop_time_seconds = 181
+        self.assertEqual(Precog.stable_queue_key(recording), "S")
+
+
+class PrecogApplyFavoriteCapTests(unittest.TestCase):
+    def test_caps_at_180_when_favorite_and_above(self):
+        recording = _make_recording()
+        recording.is_favorite = True
+        self.assertEqual(Precog._apply_favorite_cap(200, recording), 180)
+
+    def test_preserves_180_when_favorite(self):
+        recording = _make_recording()
+        recording.is_favorite = True
+        self.assertEqual(Precog._apply_favorite_cap(180, recording), 180)
+
+    def test_preserves_below_180_when_favorite(self):
+        recording = _make_recording()
+        recording.is_favorite = True
+        self.assertEqual(Precog._apply_favorite_cap(60, recording), 60)
+
+    def test_does_not_cap_when_not_favorite(self):
+        recording = _make_recording()
+        recording.is_favorite = False
+        self.assertEqual(Precog._apply_favorite_cap(200, recording), 200)
+
+    def test_uses_same_rule_as_snapshot_and_decide_queue(self):
+        """Prove that snapshot and decide_queue both delegate to the same helper."""
+        recording = _make_recording()
+        recording.is_favorite = True
+        recording.loop_time_seconds = 300
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        with patch("app.core.recording.history_manager.random.randint", return_value=200):
+            snap = Precog.snapshot(recording, now=now)
+            dec = Precog.decide_queue(recording, base_interval=300, now=now)
+        snap_capped = snap.adjusted_interval
+        dec_capped = dec.adjusted_interval
+        helper_capped = Precog._apply_favorite_cap(200, recording)
+        self.assertEqual(snap_capped, helper_capped)
+        self.assertEqual(dec_capped, helper_capped)
+
+
+class PrecogStableQueueKeyRegressionTests(unittest.TestCase):
+    """Regression tests: stable_queue_key must NOT be affected by snapshot's adjusted_interval."""
+
+    def test_stable_queue_key_unaffected_by_snapshot(self):
+        """stable_queue_key must return base-based key even after snapshot computes adjusted."""
+        recording = _make_recording()
+        recording.loop_time_seconds = 300
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        Precog.snapshot(recording, now=now)
+        # recording.loop_time_seconds must NOT have been mutated to the adjusted value
+        self.assertEqual(recording.loop_time_seconds, 300)
+        self.assertEqual(Precog.stable_queue_key(recording), "S")
+
+    def test_stable_queue_key_matches_base_not_snap_queue_key(self):
+        """When snapshot queue_key differs from base, stable_queue_key must still return base."""
+        recording = _make_recording()
+        recording.loop_time_seconds = 300
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        with patch("app.core.recording.history_manager.random.randint", return_value=60):
+            snap = Precog.snapshot(recording, now=now)
+        # snap may have queue_key "F" (if jitter pushed it low) but base is 300 → "S"
+        self.assertEqual(Precog.stable_queue_key(recording), "S")
+
+
+class PrecogSnapshotOptimizationTests(unittest.TestCase):
+    def test_snapshot_does_not_delegate_to_predict_nor_decide_queue(self):
+        """snapshot must not call predict() or decide_queue() — core values
+        are computed directly to eliminate duplicated work."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        with patch.object(Precog, "predict") as mock_predict, \
+             patch.object(Precog, "decide_queue") as mock_decide:
+            snap = Precog.snapshot(recording, now=now)
+            mock_predict.assert_not_called()
+            mock_decide.assert_not_called()
+        self.assertIsInstance(snap, PrecogSnapshot)
+        self.assertGreaterEqual(snap.likelihood, 0.0)
+        self.assertLessEqual(snap.likelihood, 1.0)
+
+    def test_snapshot_calls_get_adjusted_interval_once(self):
+        """Proves optimization: get_adjusted_interval called 1x (down from 2)."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        orig_ai = HistoryManager.get_adjusted_interval
+        with patch.object(HistoryManager, "get_adjusted_interval", wraps=orig_ai) as mock_ai:
+            snap = Precog.snapshot(recording, now=now)
+            self.assertEqual(mock_ai.call_count, 1)
+            self.assertIsInstance(snap, PrecogSnapshot)
+
+    def test_snapshot_top_level_get_forecast_details_calls(self):
+        """Proves optimization: only 2 top-level get_forecast_details calls
+        (1 explicit from snapshot + 1 implicit via get_adjusted_interval →
+        get_likelihood_score). Before optimization: 4 (1 explicit + 1 implicit
+        per each predict + decide_queue)."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        top_level_count = [0]
+        original = HistoryManager.get_forecast_details
+
+        def counting_side_effect(*args, **kwargs):
+            # Only count top-level calls: horizon-recurse passes include_horizons=False
+            if kwargs.get("include_horizons", True):
+                top_level_count[0] += 1
+            return original(*args, **kwargs)
+
+        with patch.object(HistoryManager, "get_forecast_details", side_effect=counting_side_effect):
+            snap = Precog.snapshot(recording, now=now)
+            self.assertEqual(top_level_count[0], 2)
+            self.assertIsInstance(snap, PrecogSnapshot)
+
+    def test_snapshot_internal_consistency(self):
+        """All fields derived from forecast come from the same single call."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        snap = Precog.snapshot(recording, now=now)
+        self.assertEqual(snap.likelihood, snap.forecast_details["score"])
+        self.assertEqual(snap.confidence, snap.forecast_details["confidence"])
+        self.assertEqual(snap.reason_key, snap.forecast_details.get("reason_key", ""))
 
 
 if __name__ == "__main__":

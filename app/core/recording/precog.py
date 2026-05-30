@@ -88,7 +88,7 @@ class Precog:
 
         clusters, display_cluster, first_h, last_h, end_h = HistoryManager._cluster_info(active_hours, display_hour)
         current_cluster = next((c for c in clusters if now.hour in c), None)
-        range_str = f"{first_h:02d}:00‑{end_h:02d}:00"
+        range_str = f"{first_h:02d}:00-{end_h:02d}:00"
 
         is_live = recording.is_live
 
@@ -132,26 +132,36 @@ class Precog:
 
     @staticmethod
     def snapshot(recording: Recording, now: datetime | None = None) -> PrecogSnapshot:
-        """Return a unified snapshot of predictive state for *recording* at *now*."""
+        """Return a unified snapshot of predictive state for *recording* at *now*.
+
+        Core values (forecast, adjusted_interval) are computed once and shared
+        across derived fields — avoids the 4× get_forecast_details and 2×
+        get_adjusted_interval that calling predict() + decide_queue() would
+        produce independently.
+        """
         now = now or datetime.now()
-        prediction = Precog.predict(recording, now=now)
+        forecast = HistoryManager.get_forecast_details(recording, now=now)
         base_interval = getattr(recording, "loop_time_seconds", None) or Precog.DEFAULT_BASE_INTERVAL
-        decision = Precog.decide_queue(recording, base_interval=base_interval, now=now)
-        ts = Precog.time_state(recording, now=now)
-        stale = RecordingStateLogic.is_stale(recording, now=now)
+
+        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval)
+        adjusted_interval = Precog._apply_favorite_cap(adjusted_interval, recording)
 
         return PrecogSnapshot(
-            likelihood=prediction.likelihood,
-            confidence=prediction.confidence,
-            forecast_details=prediction.forecast_details,
-            reason_key=decision.reason,
-            adjusted_interval=decision.adjusted_interval,
-            queue_key=decision.queue_key,
-            should_check=decision.should_check,
-            time_state=ts,
-            is_stale=stale,
-            priority_score=prediction.priority_score,
-            consistency_score=prediction.consistency_score,
+            likelihood=forecast["score"],
+            confidence=forecast["confidence"],
+            forecast_details=forecast,
+            reason_key=forecast.get("reason_key", ""),
+            adjusted_interval=adjusted_interval,
+            queue_key=Precog.interval_to_queue_key(adjusted_interval),
+            should_check=is_time_interval_exceeded(
+                getattr(recording, "detection_time", None),
+                adjusted_interval,
+                now,
+            ),
+            time_state=Precog.time_state(recording, now=now),
+            is_stale=RecordingStateLogic.is_stale(recording, now=now),
+            priority_score=getattr(recording, "priority_score", 0.0),
+            consistency_score=getattr(recording, "consistency_score", 0.0),
         )
 
     @staticmethod
@@ -164,6 +174,26 @@ class Precog:
         return "S"
 
     @staticmethod
+    def _apply_favorite_cap(adjusted_interval: int, recording: Recording) -> int:
+        """Cap adjusted interval at 180s for favorite recordings."""
+        if getattr(recording, "is_favorite", False) and adjusted_interval > 180:
+            return 180
+        return adjusted_interval
+
+    @staticmethod
+    def stable_queue_key(recording: Recording) -> str:
+        """Stable queue key for UI badge — base (configured) interval only, no jitter.
+
+        The old badge path used *loop_time_seconds* or 60 directly without
+        adjustment/jitter.  This restores that semantics so the badge never
+        flickers due to operational jitter.
+        """
+        base = getattr(recording, "loop_time_seconds", None)
+        if base is None:
+            base = 60  # legacy UI badge default
+        return Precog.interval_to_queue_key(base)
+
+    @staticmethod
     def decide_queue(
         recording: Recording, base_interval: int = DEFAULT_BASE_INTERVAL,
         now: datetime | None = None,
@@ -173,10 +203,7 @@ class Precog:
         forecast = HistoryManager.get_forecast_details(recording, now=now)
         likelihood = forecast["score"]
         adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval)
-
-        # Favorites never go to slow queue (>180s)
-        if getattr(recording, "is_favorite", False) and adjusted_interval > 180:
-            adjusted_interval = 180
+        adjusted_interval = Precog._apply_favorite_cap(adjusted_interval, recording)
 
         queue_key = Precog.interval_to_queue_key(adjusted_interval)
 

@@ -81,7 +81,7 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             args, kwargs = mock_snapshot.call_args
             self.assertIs(args[0], recording)
             self.assertIsNone(kwargs.get("now"))
-            self.assertEqual(recording.loop_time_seconds, 60)
+            self.assertEqual(recording.loop_time_seconds, 300)
 
         asyncio.run(_run())
 

@@ -439,7 +439,6 @@ class RecordingManager:
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
             recording.loop_time_seconds = base_interval
             snap = Precog.snapshot(recording, now=None)
-            recording.loop_time_seconds = snap.adjusted_interval
             likelihood = snap.likelihood
 
             if snap.should_check:
@@ -466,7 +465,7 @@ class RecordingManager:
                         "rec_id": recording.rec_id,
                         "priority": prio_key,
                         "likelihood": round(float(likelihood), 4),
-                        "loop_time_seconds": recording.loop_time_seconds,
+                        "loop_time_seconds": snap.adjusted_interval,
                         "is_favorite": bool(getattr(recording, "is_favorite", False)),
                     },
                 )

@@ -39,6 +39,12 @@ from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
 from app.utils.logger import logger
 
+_QUEUE_KEY_COLORS = {
+    "F": QUEUE_COLORS["fast"],
+    "M": QUEUE_COLORS["medium"],
+    "S": QUEUE_COLORS["slow"],
+}
+
 _RECORDING_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
@@ -48,6 +54,7 @@ class RecordingListModel(QAbstractListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._recordings: list = []
+        self._badge_cache: dict[str, tuple] = {}
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         parent = parent or QModelIndex()
@@ -66,6 +73,7 @@ class RecordingListModel(QAbstractListModel):
     def set_recordings(self, recordings: list) -> None:
         self.beginResetModel()
         self._recordings = list(recordings)
+        self._badge_cache.clear()
         self.endResetModel()
 
     def recordings(self) -> list:
@@ -169,19 +177,24 @@ class RecordingListDelegate(QStyledItemDelegate):
         action_left = min((rect.x() for _, _, rect in action_rects), default=row.right() - 34)
         name = rec.streamer_name or "Unknown"
         if RecordingStateLogic.should_show_live_title(rec):
-            name = f"{rec.streamer_name} — {rec.live_title}"
+            name = f"{name} — {rec.live_title}"
 
         badges: list[tuple[str, str, int]] = []
-        queue_label, queue_color = self._queue_badge(rec)
-        badges.append((queue_label, queue_color, 36))
+        qk, qc, likelihood, stale = self._badge_data(rec, index)
+        badges.append((qk, qc, 36))
 
-        likelihood = self._likelihood(rec)
         if likelihood > 0:
-            label = "High" if likelihood >= 0.8 else "Normal"
+            label = (
+                self._card_l.get("likelihood_high", "High")
+                if likelihood >= 0.8
+                else self._card_l.get("likelihood_normal", "Normal")
+            )
             color = "#4CAF50" if likelihood >= 0.8 else "#42A5F5"
-            badges.append((label, color, 58))
+            painter.setFont(body_font(8, QFont.Weight.Bold))
+            badge_w = max(36, painter.fontMetrics().horizontalAdvance(label) + 16)
+            badges.append((label, color, badge_w))
 
-        if RecordingStateLogic.is_stale(rec):
+        if stale:
             badges.append((tr("recording_card.stale_badge", default="30D"), "#EF6C00", 46))
 
         gap = 6
@@ -289,18 +302,33 @@ class RecordingListDelegate(QStyledItemDelegate):
         painter.setFont(body_font(8, QFont.Weight.Bold))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
-    @staticmethod
-    def _queue_badge(rec) -> tuple[str, str]:
-        interval = getattr(rec, "loop_time_seconds", 60) or 60
-        qk = Precog.interval_to_queue_key(interval)
-        return qk, {"F": QUEUE_COLORS["fast"], "M": QUEUE_COLORS["medium"], "S": QUEUE_COLORS["slow"]}[qk]
+    def _badge_data(self, rec, index: QModelIndex) -> tuple[str, str, float, bool]:
+        """Read badge data from model cache if available; fallback to computed snapshot."""
+        model = index.model()
+        if hasattr(model, "_badge_cache"):
+            rid = getattr(rec, "rec_id", None) or id(rec)
+            cached = model._badge_cache.get(rid)
+            if cached is not None:
+                return cached
+        return self._snapshot_data(rec)
 
     @staticmethod
-    def _likelihood(rec) -> float:
+    def _snapshot_data(rec) -> tuple[str, str, float, bool]:
+        """Return (queue_key, queue_color, likelihood, is_stale).
+
+        Queue key uses the **stable** (base) interval — no jitter, default 60.
+        Likelihood and is_stale come from Precog.snapshot for accuracy.
+
+        Callers SHOULD pre-populate model._badge_cache and prefer
+        _badge_data() to avoid Precog.snapshot() in the paint hot path.
+        """
         try:
-            return Precog.predict(rec).likelihood
+            qk = Precog.stable_queue_key(rec)
+            qc = _QUEUE_KEY_COLORS[qk]
+            snap = Precog.snapshot(rec)
+            return qk, qc, snap.likelihood, snap.is_stale
         except Exception:
-            return 0.0
+            return "?", "#9E9E9E", 0.0, False
 
 
 class QtRecordingsView(QWidget):
@@ -657,6 +685,7 @@ class QtRecordingsView(QWidget):
 
         if self._view_mode == "list":
             self.list_model.set_recordings(self._visible_recordings)
+            self._update_badge_cache()
             self.list_view.viewport().update()
             return
 
@@ -823,9 +852,23 @@ class QtRecordingsView(QWidget):
 
     def _on_refresh_tick(self):
         """Called every second to update durations/status of visible cards."""
+        self._update_badge_cache()
         if self._view_mode == "list":
             self.list_model.refresh_all()
-            return
+
+    def _update_badge_cache(self) -> None:
+        """Pre-compute badge data for all recordings — avoids Precog.snapshot in paint()."""
+        cache = self.list_model._badge_cache
+        cache.clear()
+        for rec in self.list_model.recordings():
+            rid = getattr(rec, "rec_id", None) or id(rec)
+            try:
+                snap = Precog.snapshot(rec)
+                qk = Precog.stable_queue_key(rec)
+                qc = _QUEUE_KEY_COLORS[qk]
+                cache[rid] = (qk, qc, snap.likelihood, snap.is_stale)
+            except Exception:
+                cache[rid] = ("?", "#9E9E9E", 0.0, False)
 
         # Only update visible cards to save CPU
         for card in self._cards.values():
@@ -877,14 +920,9 @@ class QtRecordingsView(QWidget):
         if width < 100:
             width = self.width() or 1000
 
-        if self._view_mode == "list":
-            cols      = 1
-            card_w    = width - 40   # full width minus scroll padding
-            card_h    = 72
-        else:
-            cols   = max(1, (width - 10) // 335)
-            card_w = 320
-            card_h = 165
+        cols   = max(1, (width - 10) // 335)
+        card_w = 320
+        card_h = 165
 
         visible = [c for c in self._cards.values() if c.isVisible()]
 
