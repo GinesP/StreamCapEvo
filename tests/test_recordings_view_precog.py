@@ -102,5 +102,83 @@ class RecordingsViewPrecogTests(unittest.TestCase):
         mock_snapshot.assert_not_called()
 
 
+
+class PrecogSnapshotBatchTests(unittest.TestCase):
+    """Tests for QtRecordingsView._on_precog_snapshot_batch."""
+
+    def test_populates_badge_cache_from_snapshots(self):
+        """_on_precog_snapshot_batch populates list model badge cache without Precog recomputation."""
+        from app.qt.views.recordings_view import QtRecordingsView
+
+        rec = MagicMock()
+        rec.rec_id = "test-1"
+        rec.loop_time_seconds = 60  # → "F" via stable_queue_key
+
+        snap = MagicMock()
+        snap.likelihood = 0.85
+        snap.is_stale = False
+
+        model = MagicMock()
+        model._badge_cache = {}
+        model.recordings.return_value = [rec]
+
+        view = MagicMock(spec=QtRecordingsView)
+        view.list_model = model
+        view._view_mode = "list"
+        view.list_view = MagicMock()
+        view._cards = {}
+
+        QtRecordingsView._on_precog_snapshot_batch(
+            view, "precog_snapshot_batch", {"test-1": snap}
+        )
+
+        cached = model._badge_cache.get("test-1")
+        self.assertIsNotNone(cached)
+        qk, qc, likelihood, stale = cached
+        self.assertEqual(qk, "F")
+        self.assertEqual(likelihood, 0.85)
+        self.assertFalse(stale)
+
+    def test_skips_recordings_not_in_snapshot_batch(self):
+        """Recordings missing from snapshots dict keep existing cache entries."""
+        from app.qt.views.recordings_view import QtRecordingsView
+
+        rec_updated = MagicMock()
+        rec_updated.rec_id = "updated"
+        rec_updated.loop_time_seconds = 60
+
+        rec_missing = MagicMock()
+        rec_missing.rec_id = "missing"
+        rec_missing.loop_time_seconds = 300
+
+        snap = MagicMock()
+        snap.likelihood = 0.9
+        snap.is_stale = False
+
+        model = MagicMock()
+        model._badge_cache = {"missing": ("S", "#FF0000", 0.1, True)}
+        model.recordings.return_value = [rec_updated, rec_missing]
+
+        view = MagicMock(spec=QtRecordingsView)
+        view.list_model = model
+        view._view_mode = "list"
+        view.list_view = MagicMock()
+        view._cards = {}
+
+        QtRecordingsView._on_precog_snapshot_batch(
+            view, "precog_snapshot_batch", {"updated": snap}
+        )
+
+        # Updated recording gets new cache entry
+        updated_cached = model._badge_cache.get("updated")
+        self.assertIsNotNone(updated_cached)
+        self.assertEqual(updated_cached[0], "F")
+
+        # Missing recording keeps old entry
+        missing_cached = model._badge_cache.get("missing")
+        self.assertIsNotNone(missing_cached)
+        self.assertEqual(missing_cached, ("S", "#FF0000", 0.1, True))
+
+
 if __name__ == "__main__":
     unittest.main()

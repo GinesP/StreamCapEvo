@@ -136,6 +136,194 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
 
         asyncio.run(_run())
 
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    @patch("app.core.recording.precog.Precog.snapshot")
+    def test_sets_last_snapshot_and_publishes_event(
+        self, mock_snapshot, mock_metrics
+    ):
+        """check_all_live_status sets recording._last_snapshot and publishes precog_snapshot_batch."""
+        mock_snap = MagicMock(spec=PrecogSnapshot)
+        mock_snap.adjusted_interval = 60
+        mock_snap.likelihood = 0.95
+        mock_snap.should_check = True
+        mock_snap.queue_key = "F"
+        mock_snapshot.return_value = mock_snap
+
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            GlobalRecordingState.recordings = [recording]
+
+            await manager.check_all_live_status()
+
+            self.assertIs(recording._last_snapshot, mock_snap)
+            app.event_bus.publish.assert_any_call(
+                "precog_snapshot_batch", {"rec-test": mock_snap}
+            )
+
+        asyncio.run(_run())
+
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    @patch("app.core.recording.precog.Precog.snapshot")
+    def test_is_recording_branch_invalidates_last_snapshot(
+        self, mock_snapshot, mock_metrics
+    ):
+        """check_all_live_status invalidates _last_snapshot for is_recording recordings."""
+        mock_snap = MagicMock(spec=PrecogSnapshot)
+        mock_snap.adjusted_interval = 60
+        mock_snap.likelihood = 0.95
+        mock_snap.should_check = True
+        mock_snap.queue_key = "F"
+        mock_snapshot.return_value = mock_snap
+
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            recording.is_recording = True
+            recording._last_snapshot = MagicMock()
+            GlobalRecordingState.recordings = [recording]
+
+            await manager.check_all_live_status()
+
+            self.assertIsNone(recording._last_snapshot)
+            mock_snapshot.assert_not_called()
+
+        asyncio.run(_run())
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    def test_check_if_live_finally_invalidates_last_snapshot(
+        self, mock_metrics
+    ):
+        """check_if_live finally block invalidates _last_snapshot on early return."""
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            recording.is_recording = True
+            recording.is_checking = True
+            recording._last_snapshot = MagicMock()
+            GlobalRecordingState.recordings = [recording]
+
+            await manager.check_if_live(recording)
+
+            self.assertIsNone(recording._last_snapshot)
+            self.assertFalse(recording.is_checking)
+
+        asyncio.run(_run())
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    def test_stop_monitor_recording_clears_last_snapshot(
+        self, mock_metrics
+    ):
+        """stop_monitor_recording clears _last_snapshot."""
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            recording._last_snapshot = MagicMock()
+            GlobalRecordingState.recordings = [recording]
+
+            await manager.stop_monitor_recording(recording)
+
+            self.assertIsNone(recording._last_snapshot)
+
+        asyncio.run(_run())
+
 
 def _settings_get(key, default=None):
     return {

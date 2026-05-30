@@ -331,6 +331,7 @@ class RecordingManager:
             self.stop_recording(recording, manually_stopped=True)
             self._predictor_dispatched_at.pop(recording.rec_id, None)
             self._predictor_last_offline_result_at.pop(recording.rec_id, None)
+            recording._last_snapshot = None
 
             # Now update to stopped monitoring state
             monitor_stopped_label = self._.get('monitor_stopped', 'Stopped monitoring')
@@ -422,11 +423,13 @@ class RecordingManager:
         busy_slow = 0
         skipping_count = 0
         
+        _precog_snapshots = {}
         for recording in recordings_to_check:
             if not recording.monitor_status:
                 continue
 
             if recording.is_recording:
+                recording._last_snapshot = None
                 # Still live, so update historical patterns!
                 alpha_active = float(self.settings.user_config.get("ema_alpha_active", 0.1))
                 alpha_offline = float(self.settings.user_config.get("ema_alpha_offline", 0.01))
@@ -439,6 +442,8 @@ class RecordingManager:
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
             recording.loop_time_seconds = base_interval
             snap = Precog.snapshot(recording, now=None)
+            recording._last_snapshot = snap
+            _precog_snapshots[recording.rec_id] = snap
             likelihood = snap.likelihood
 
             if snap.should_check:
@@ -510,6 +515,10 @@ class RecordingManager:
             "total_disp":  dispatched_fast + dispatched_medium + dispatched_slow,
             "total_busy":  busy_fast + busy_medium + busy_slow,
         })
+
+        # Publish snapshot data so UI consumers can update without recomputing Precog
+        if _precog_snapshots:
+            self.app.event_bus.publish("precog_snapshot_batch", _precog_snapshots)
 
         # Persist all recording updates once after all checks are queued
         await self.persist_recordings()
@@ -717,7 +726,7 @@ class RecordingManager:
                     self.app.event_bus.run_task(recorder.start_recording, stream_info)
                 else:
                     if recording.notified_live_start:
-                        notify_loop_time = user_config.get("notify_loop_time")
+                        notify_loop_time = self.settings.user_config.get("notify_loop_time")
                         recording.loop_time_seconds = int(notify_loop_time or 600)
                     else:
                         recording.loop_time_seconds = self.loop_time_seconds
@@ -781,6 +790,7 @@ class RecordingManager:
 
         finally:
             recording.is_checking = False
+            recording._last_snapshot = None
             self.app.event_bus.publish("update", recording)
             await self.persist_recordings()
         return

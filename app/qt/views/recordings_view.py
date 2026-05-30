@@ -832,6 +832,7 @@ class QtRecordingsView(QWidget):
         self.app.event_bus.subscribe("update", self._on_recording_updated)
         self.app.event_bus.subscribe("add", self._on_recording_added)
         self.app.event_bus.subscribe("delete", self._on_recording_deleted)
+        self.app.event_bus.subscribe("precog_snapshot_batch", self._on_precog_snapshot_batch)
 
     def _on_recording_updated(self, topic, recording):
         """Handle 'update' event from EventBus."""
@@ -856,21 +857,22 @@ class QtRecordingsView(QWidget):
         if self._view_mode == "list":
             self.list_model.refresh_all()
 
-    def _update_badge_cache(self) -> None:
-        """Pre-compute badge data for all recordings — avoids Precog.snapshot in paint()."""
+    def _on_precog_snapshot_batch(self, topic, snapshots: dict) -> None:
+        """Cache badge data from operational cycle — no Precog recomputation in UI."""
         cache = self.list_model._badge_cache
-        cache.clear()
         for rec in self.list_model.recordings():
             rid = getattr(rec, "rec_id", None) or id(rec)
-            try:
-                snap = Precog.snapshot(rec)
+            snap = snapshots.get(rid)
+            if snap is not None:
                 qk = Precog.stable_queue_key(rec)
-                qc = _QUEUE_KEY_COLORS[qk]
+                qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
                 cache[rid] = (qk, qc, snap.likelihood, snap.is_stale)
-            except Exception:
-                cache[rid] = ("?", "#9E9E9E", 0.0, False)
 
-        # Only update visible cards to save CPU
+        if self._view_mode == "list":
+            self.list_view.viewport().update()
+
+    def _update_badge_cache(self) -> None:
+        """Refresh visible cards; badge cache is populated by operational cycle events."""
         for card in self._cards.values():
             if card.isVisible():
                 card.update_content()

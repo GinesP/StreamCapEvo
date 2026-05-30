@@ -17,6 +17,7 @@ class FillBadgesPrecogTests(unittest.TestCase):
 
         rec = MagicMock()
         rec.loop_time_seconds = 60
+        rec._last_snapshot = None
         layout = MagicMock()
         layout.count.return_value = 0
 
@@ -46,6 +47,7 @@ class FillBadgesPrecogTests(unittest.TestCase):
 
         rec = MagicMock()
         rec.loop_time_seconds = 120
+        rec._last_snapshot = None
         layout = MagicMock()
         layout.count.return_value = 0
 
@@ -71,6 +73,7 @@ class FillBadgesPrecogTests(unittest.TestCase):
 
         rec = MagicMock()
         rec.loop_time_seconds = None
+        rec._last_snapshot = None
         layout = MagicMock()
         layout.count.return_value = 0
 
@@ -95,6 +98,7 @@ class FillBadgesPrecogTests(unittest.TestCase):
         )
 
         rec = MagicMock()
+        rec._last_snapshot = None
         layout = MagicMock()
         layout.count.return_value = 0
 
@@ -115,6 +119,7 @@ class FillBadgesPrecogTests(unittest.TestCase):
         mock_snapshot.side_effect = RuntimeError("snapshot failed")
 
         rec = MagicMock()
+        rec._last_snapshot = None
         layout = MagicMock()
         layout.count.return_value = 0
 
@@ -127,6 +132,70 @@ class FillBadgesPrecogTests(unittest.TestCase):
         badge_texts = [args[0] for args in calls if args]
         self.assertEqual(len(badge_texts), 1)
         self.assertEqual(badge_texts[0], "?")
+
+
+
+class FillBadgesLastSnapshotTests(unittest.TestCase):
+    """_fill_badges reads from recording._last_snapshot when available."""
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    def test_uses_last_snapshot_when_available(self, mock_snapshot, mock_badge_cls):
+        """_fill_badges must prefer _last_snapshot over Precog.snapshot()."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 60
+        rec._last_snapshot = MagicMock(likelihood=0.65, is_stale=False)
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        mock_snapshot.assert_not_called()
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    def test_falls_back_to_snapshot_when_no_last_snapshot(self, mock_snapshot, mock_badge_cls):
+        """_fill_badges calls Precog.snapshot() when _last_snapshot is not set."""
+        mock_snapshot.return_value = MagicMock(likelihood=0.85, is_stale=False)
+
+        rec = MagicMock()
+        rec.loop_time_seconds = 60
+        rec._last_snapshot = None
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        mock_snapshot.assert_called_once_with(rec)
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    def test_last_snapshot_stale_flag_propagated(self, mock_snapshot, mock_badge_cls):
+        """_fill_badges propagates is_stale from _last_snapshot."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 60
+        rec._last_snapshot = MagicMock(likelihood=0.0, is_stale=True)
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        calls = [call.args for call in mock_badge_cls.call_args_list]
+        badge_texts = [args[0] for args in calls if args]
+        self.assertIn("30D", badge_texts)
+        mock_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":

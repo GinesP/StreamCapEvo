@@ -582,26 +582,138 @@ Esto rompía `Precog.stable_queue_key()` porque esa función lee `recording.loop
 
 - `python -m unittest tests.test_precog tests.test_record_manager_precog` → OK
 
+## Paso 10 — Precog → UI notifications (event-driven snapshot propagation)
+
+**Estado**: ✅ completado.
+
+### Problema
+
+La UI recomputaba `Precog.snapshot()` de forma independiente al ciclo operativo:
+- `_update_badge_cache()` llamaba `Precog.snapshot()` para cada recording cada 1 segundo.
+- `_fill_badges()` en `recording_card.py` llamaba `Precog.snapshot()` en cada `update_content()`.
+- El ciclo operativo (`check_all_live_status`) ya computaba el mismo snapshot, pero los datos se descartaban después del dispatch.
+
+Esto duplicaba trabajo: 2 snapshots por recording por ciclo (uno en operación, otro en UI).
+
+### Solución aplicada
+
+Se implementó un mecanismo **event-driven** de propagación de snapshots desde el ciclo operativo hacia la UI:
+
+1. **`record_manager.py:check_all_live_status`** — captura los `PrecogSnapshot` en un dict keyeado por `rec_id`, los almacena como `recording._last_snapshot`, y publica un evento `"precog_snapshot_batch"` al finalizar el ciclo.
+
+2. **`recordings_view.py`** — se suscribe a `"precog_snapshot_batch"`. El handler `_on_precog_snapshot_batch` actualiza `_badge_cache` con los datos del snapshot (queue key, likelihood, is_stale) sin llamar a `Precog.snapshot()`.
+
+3. **`recording_card.py:_fill_badges`** — intenta leer `recording._last_snapshot` primero. Si no existe, cae en `Precog.snapshot()` como fallback (recording nuevo sin ciclo operativo previo).
+
+4. **`_update_badge_cache`** — ya no computa Precog snapshots. Solo refresca las cards visibles y el repintado de lista. La cache de badges se nutre exclusivamente por eventos del ciclo operativo.
+
+### Flujo de datos resultante
+
+```
+Ciclo operativo (~180s):
+  check_all_live_status()
+    → Precog.snapshot(rec) para cada recording monitoreado
+    → recording._last_snapshot = snap
+    → event_bus.publish("precog_snapshot_batch", {rec_id: snap, ...})
+
+UI subscriber:
+  _on_precog_snapshot_batch()
+    → actualiza _badge_cache sin Precog.snapshot()
+    → repinta list view si está en modo lista
+
+Timer UI (1s):
+  _on_refresh_tick()
+    → _update_badge_cache() — solo actualiza cards visibles
+    → refresh_all() — emite dataChanged, paint() lee de cache
+
+Card badges:
+  _fill_badges()
+    → getattr(rec, "_last_snapshot", None) or Precog.snapshot(rec)
+```
+
+### Stale snapshot invalidation (must-fix regressions)
+
+Durante una auditoría posterior se encontraron tres fugas de estado stale en el mecanismo de `_last_snapshot`:
+
+1. **Rama `is_recording` en `check_all_live_status`** (`record_manager.py:430`):
+   - Una grabación en curso (recording activo) saltaba todo el bloque de snapshot y solo actualizaba EMA. El `_last_snapshot` quedaba congelado desde el ciclo anterior, mostrando datos previos a que la grabación empezara.
+   - **Fix**: `recording._last_snapshot = None` al entrar a la rama. La UI cae a `Precog.snapshot()` en tiempo real.
+
+2. **Finally de `check_if_live`** (`record_manager.py:789`):
+   - Después de ejecutar un chequeo (live→offline, offline→live, o cualquier transición), `_last_snapshot` seguía siendo el snapshot del ciclo operativo previo al chequeo, que ya no refleja el estado actual.
+   - **Fix**: `recording._last_snapshot = None` en el finally block. Esto cubre todos los early returns (`is_recording`, `active_recorders`, `monitor_status=False`) y el flujo completo.
+
+3. **`stop_monitor_recording`** (`record_manager.py:333`):
+   - Al dejar de monitorear, el snapshot residual quedaba en el recording. Si se volvía a monitorear, la UI podía leer datos obsoletos hasta el próximo ciclo.
+   - **Fix**: `recording._last_snapshot = None` después de limpiar los predictores.
+
+### Semántica de frescura resultante
+
+| Condición | `_last_snapshot` | UI lee de |
+|---|---|---|
+| Después de `check_all_live_status` (normal) | snapshot fresco | cache del batch |
+| Grabación activa (`is_recording=True`) | `None` (invalidado) | `Precog.snapshot()` en tiempo real |
+| Después de `check_if_live` | `None` (invalidado) | `Precog.snapshot()` hasta próximo ciclo |
+| Monitoreo detenido | `None` (limpiado) | `Precog.snapshot()` si se consulta |
+| Grabación sin ciclo previo | nunca se asignó | `Precog.snapshot()` (fallback natural) |
+
+La regla es simple y conservadora: **cuando el estado del recording cambia de forma meaningful, se invalida el snapshot cacheado**. El fallback `getattr(rec, "_last_snapshot", None) or Precog.snapshot(rec)` en `recording_card.py:488` garantiza que siempre se tenga datos frescos, aunque con la penalidad de recomputar Precog cuando no hay cache.
+
+### user_config NameError
+
+En la rama `only_notify_no_record` de `check_if_live` (`record_manager.py:727`), se referenciaba `user_config.get("notify_loop_time")` pero `user_config` no era una variable definida en ese ámbito. El contexto correcto es `self.settings.user_config.get(...)`, idéntico al patrón usado en el resto del archivo.
+
+**Fix**: `user_config.get(...)` → `self.settings.user_config.get(...)`.
+
+### Thread safety
+
+No hay problema de thread boundary porque qasync ejecuta el event loop de asyncio en el mismo thread que Qt. Los callbacks sync de `event_bus.publish()` se ejecutan en el mismo thread, por lo que las actualizaciones de UI son seguras.
+
+### Archivos afectados
+
+- `app/core/recording/record_manager.py` — captura snapshots y publica evento `precog_snapshot_batch`
+- `app/qt/views/recordings_view.py` — suscripción al evento, handler `_on_precog_snapshot_batch`, `_update_badge_cache` simplificado
+- `app/qt/components/recording_card.py` — `_fill_badges` lee `_last_snapshot` primero
+- `tests/test_record_manager_precog.py` — test para `_last_snapshot` y evento publicado
+- `tests/test_recordings_view_precog.py` — tests para `_on_precog_snapshot_batch`
+- `tests/test_recording_card_badge.py` — tests para `_last_snapshot` en `_fill_badges`
+- `docs/PRECOG_PLAN_ES.md` — este documento actualizado
+
+### Verificación ejecutada
+
+- `python -m unittest tests.test_precog` → OK
+- `python -m unittest tests.test_record_manager_precog` → OK
+- `python -m unittest tests.test_recording_card_badge` → OK
+- `python -m unittest tests.test_recordings_view_precog` → OK
+- `python -m unittest tests.test_precog tests.test_record_manager_precog tests.test_recording_card_badge tests.test_recordings_view_precog` → OK (todos)
+- `python -m unittest discover` → 124 tests, OK
+
+### Archivos afectados en el parche de regresiones
+
+- `app/core/recording/record_manager.py` — 3 invalidaciones de `_last_snapshot` + fix `user_config` NameError
+- `tests/test_record_manager_precog.py` — 3 tests nuevos: invalidation en `is_recording` branch, en `check_if_live` finally, y en `stop_monitor_recording`
+- `docs/PRECOG_PLAN_ES.md` — documentadas las regresiones y la semántica de frescura resultante
+
 ## Qué sigue pendiente
 
-1. **Evaluar notificaciones de cambios Precog → UI**
-   - Este paso queda deliberadamente después de cerrar snapshot como fuente principal.
-   - La cache de badges introducida en la auditoría post-migración reduce algo la urgencia.
-   - No hay implementación iniciada todavía.
+1. **Deuda técnica: Próximo bloque recomendado — Time-consistency debt en `Precog.snapshot()`**
+   - `snapshot(now=...)` computa el forecast con `now`, pero `get_adjusted_interval()` deriva el intervalo internamente llamando a `get_likelihood_score()` que usa `datetime.now()` internamente (sin pasar `now`).
+   - Esto ya está documentado en el Paso 9.
+   - Es la siguiente prioridad porque afecta la consistencia de los datos del snapshot bajo tests y en transiciones de hora.
 
-2. **Opcional de baja prioridad: revisar `recording_info_dialog.py` para snapshot**
+2. **Baja prioridad: revisar `recording_info_dialog.py` para snapshot**
    - No es urgente porque es un diálogo bajo demanda.
    - Su impacto es mucho menor que el de `recordings_view.py`.
 
-3. **Opcional de baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
-   - Requiere absorber la lógica de clustering o reescribir la máquina de estados, lo que excede cambio mínimo seguro.
+3. **Baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
+   - Requiere absorber la lógica de clustering o reescribir la máquina de estados.
    - Queda para una fase posterior de consolidación más profunda.
 
 ## Punto de reentrada para futuras sesiones
 
-La recomputación interna de `snapshot()` ya está optimizada (Paso 9). El siguiente paso recomendado es:
+La notificación Precog → UI ya está implementada (Paso 10). El siguiente paso recomendado es:
 
-1. evaluar notificaciones de cambios Precog → UI,
+1. Abordar la **deuda de consistencia temporal** en `Precog.snapshot()` (time-consistency debt),
 2. dejar este mismo documento actualizado al cierre de cada bloque para preservar continuidad entre sesiones.
 
 ## Referencias
