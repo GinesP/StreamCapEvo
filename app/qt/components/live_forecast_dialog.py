@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.recording.precog import Precog
+from app.core.recording.precog import Precog, PrecogSnapshot
 from app.qt.themes.theme import theme_manager
 from app.utils.i18n import tr
 
@@ -43,10 +43,6 @@ _EMOJI_BY_STATE = {
     "countdown": "\u23f1 ",
 }
 
-def _get_forecast_time_info(recording) -> dict:
-    return Precog.time_state(recording)
-
-
 def _get_confidence_color(confidence: str, colors: dict) -> str:
     if confidence == "high":
         return "#43A047"
@@ -56,10 +52,11 @@ def _get_confidence_color(confidence: str, colors: dict) -> str:
 
 class ForecastItemWidget(QFrame):
     """Single streamer forecast item with a clean UI."""
-    def __init__(self, recording, likelihood: float, parent=None):
+    def __init__(self, recording, snapshot: PrecogSnapshot, parent=None):
         super().__init__(parent)
         self.recording = recording
-        self._likelihood = likelihood
+        self._snapshot = snapshot
+        self._likelihood = snapshot.likelihood
         
         self.setMinimumHeight(78)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
@@ -180,8 +177,8 @@ class ForecastItemWidget(QFrame):
 
     def update_time_info(self):
         c = theme_manager.colors
-        info = _get_forecast_time_info(self.recording)
-        forecast = Precog.predict(self.recording).forecast_details
+        info = self._snapshot.time_state
+        forecast = self._snapshot.forecast_details
         
         if info["state"] == "none":
             self.time_lbl.setText("")
@@ -377,20 +374,20 @@ class LiveForecastDialog(QDialog):
         now = datetime.now()
         current_minutes = now.hour * 60 + now.minute
 
-        def _slot_minutes_until(rec) -> int | None:
+        def _slot_minutes_until(snapshot, is_live) -> int | None:
             """Return minutes until the next predicted slot, or None if unknown.
 
             For live / active-window states returns 0 so they sort first.
             For future slots returns the actual minutes-until (capped at 300 for
             the filter, but the raw value is used for sorting).
             """
-            info = _get_forecast_time_info(rec)
+            info = snapshot.time_state
             state = info.get("state")
             # Imminent / overdue — sort first regardless of wall-clock distance
-            if state in ('live_range', 'expected', 'delayed') or rec.is_live:
+            if state in ('live_range', 'expected', 'delayed') or is_live:
                 return 0
             # Future slots — parse next_slot_text for real distance
-            forecast = Precog.predict(rec).forecast_details
+            forecast = snapshot.forecast_details
             slot = forecast.get("next_slot_text", "")
             if not slot:
                 return None
@@ -406,22 +403,23 @@ class LiveForecastDialog(QDialog):
         # Gather forecasts with proximity info
         forecasts = []
         for rec in self.recordings:
-            score = Precog.predict(rec).likelihood
-            info = _get_forecast_time_info(rec)
+            snap = Precog.snapshot(rec)
+            score = snap.likelihood
+            info = snap.time_state
             state = info.get("state")
 
             # Only include if within 5 hours or live/imminent
             if rec.is_live or state in ('live_range', 'expected', 'delayed', 'countdown'):
-                forecasts.append((rec, score, _slot_minutes_until(rec)))
+                forecasts.append((rec, score, snap, _slot_minutes_until(snap, rec.is_live)))
                 continue
 
             if state in ('upcoming',) or score >= 0.35:
-                mins = _slot_minutes_until(rec)
+                mins = _slot_minutes_until(snap, rec.is_live)
                 if mins is not None and mins <= 300:
-                    forecasts.append((rec, score, mins))
+                    forecasts.append((rec, score, snap, mins))
 
         # Sort by proximity (closest first), then score as tiebreaker
-        forecasts.sort(key=lambda x: (x[2], -x[1]))
+        forecasts.sort(key=lambda x: (x[3], -x[1]))
         
         if not forecasts:
             empty_lbl = QLabel(tr("live_forecast_dialog.no_forecast"))
@@ -430,7 +428,7 @@ class LiveForecastDialog(QDialog):
             self.scroll_layout.addWidget(empty_lbl)
             return
         
-        for rec, score, _mins in forecasts:
-            item_widget = ForecastItemWidget(rec, score, parent=self.scroll_content)
+        for rec, score, snap, _mins in forecasts:
+            item_widget = ForecastItemWidget(rec, snap, parent=self.scroll_content)
             self.scroll_layout.addWidget(item_widget)
 
