@@ -131,6 +131,16 @@ class Precog:
         return {"state": "upcoming", "text": f"{first_h:02d}:00", "text_key": "", "color": ""}
 
     @staticmethod
+    def forecast(recording: Recording, now: datetime | None = None) -> dict[str, Any]:
+        """Return forecast details for lightweight UI consumers.
+
+        Unlike predict(), this does NOT compute adjusted_interval.
+        Use when the caller only needs next_slot/window/confidence data.
+        """
+        now = now or datetime.now()
+        return HistoryManager.get_forecast_details(recording, now=now)
+
+    @staticmethod
     def snapshot(recording: Recording, now: datetime | None = None) -> PrecogSnapshot:
         """Return a unified snapshot of predictive state for *recording* at *now*.
 

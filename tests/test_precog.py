@@ -653,5 +653,40 @@ class PrecogTemporalConsistencyTests(unittest.TestCase):
         self.assertGreaterEqual(dec.likelihood, 0.0)
 
 
+class PrecogForecastTests(unittest.TestCase):
+    def test_forecast_matches_predict_details(self):
+        """Precog.forecast() must return the same dict as Precog.predict().forecast_details."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        forecast = Precog.forecast(recording, now=now)
+        pred_details = Precog.predict(recording, now=now).forecast_details
+
+        self.assertEqual(forecast, pred_details)
+
+    def test_forecast_has_ui_keys(self):
+        """Ensure forecast() returns the keys consumed by recording_info_dialog."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        result = Precog.forecast(recording, now=now)
+
+        self.assertIn("next_slot_text", result)
+        self.assertIn("window_text", result)
+        self.assertIn("score", result)
+        self.assertIn("confidence", result)
+
+    def test_forecast_lighter_than_predict(self):
+        """forecast() must not call get_adjusted_interval — it's the lightweight path."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        with patch.object(
+            HistoryManager, "get_adjusted_interval"
+        ) as mock_ai:
+            Precog.forecast(recording, now=now)
+            mock_ai.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

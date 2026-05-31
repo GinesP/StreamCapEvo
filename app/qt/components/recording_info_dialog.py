@@ -128,8 +128,7 @@ class QtRecordingInfoDialog(QDialog):
         avg_min = getattr(self.rec, "avg_session_duration_minutes", None)
         avg_session_str = self._format_duration(avg_min) if avg_min is not None else tr("recording_info.never", default="Never")
 
-        prediction = Precog.predict(self.rec)
-        forecast = prediction.forecast_details
+        forecast = Precog.forecast(self.rec)
         next_slot_text = forecast.get("next_slot_text") or ""
         window_text = forecast.get("window_text") or ""
         if next_slot_text and window_text:
