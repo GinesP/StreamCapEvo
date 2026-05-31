@@ -60,7 +60,7 @@ class Precog:
         forecast = HistoryManager.get_forecast_details(recording, now=now)
 
         base_interval = getattr(recording, "loop_time_seconds", None) or Precog.DEFAULT_BASE_INTERVAL
-        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval)
+        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval, now=now)
 
         return PrecogPrediction(
             likelihood=forecast["score"],
@@ -143,7 +143,7 @@ class Precog:
         forecast = HistoryManager.get_forecast_details(recording, now=now)
         base_interval = getattr(recording, "loop_time_seconds", None) or Precog.DEFAULT_BASE_INTERVAL
 
-        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval)
+        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval, now=now)
         adjusted_interval = Precog._apply_favorite_cap(adjusted_interval, recording)
 
         return PrecogSnapshot(
@@ -202,7 +202,7 @@ class Precog:
         now = now or datetime.now()
         forecast = HistoryManager.get_forecast_details(recording, now=now)
         likelihood = forecast["score"]
-        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval)
+        adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval, now=now)
         adjusted_interval = Precog._apply_favorite_cap(adjusted_interval, recording)
 
         queue_key = Precog.interval_to_queue_key(adjusted_interval)

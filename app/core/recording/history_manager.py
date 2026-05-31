@@ -285,15 +285,17 @@ class HistoryManager:
         return result
 
     @staticmethod
-    def get_likelihood_score(recording: Recording) -> float:
+    def get_likelihood_score(recording: Recording, now: datetime | None = None) -> float:
         """
-        Calculates a score between 0.0 and 1.0 representing how likely 
+        Calculates a score between 0.0 and 1.0 representing how likely
         the streamer is to be live right now based on historical data.
         """
-        return HistoryManager.get_forecast_details(recording)["score"]
+        return HistoryManager.get_forecast_details(recording, now=now)["score"]
 
     @staticmethod
-    def get_adjusted_interval(recording: Recording, base_interval: int) -> int:
+    def get_adjusted_interval(
+        recording: Recording, base_interval: int, now: datetime | None = None,
+    ) -> int:
         """
         Returns an adjusted check interval based on the likelihood score and priority score.
         Applies a 15% jitter to prevent thundering herd / predictable bot patterns.
@@ -301,7 +303,7 @@ class HistoryManager:
         Likelihood always wins over deep sleep — if the predictor says the stream
         is likely live (>= 0.5), we check faster regardless of historical deadness.
         """
-        likelihood = HistoryManager.get_likelihood_score(recording)
+        likelihood = HistoryManager.get_likelihood_score(recording, now=now)
 
         if likelihood >= 0.9:
             target_interval = 60

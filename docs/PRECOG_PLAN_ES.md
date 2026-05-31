@@ -517,17 +517,19 @@ Esto producía por cada snapshot:
 | `get_adjusted_interval()` por snapshot | 2 | 1 |
 | Dependencia de `predict()`/`decide_queue()` | sí | no |
 
-#### Nota sobre desajuste temporal (deuda preexistente)
+#### Nota histórica: desajuste temporal ya resuelto
 
-`snapshot(now=...)` computa el forecast con el `now` que recibe del caller. Sin embargo, `get_adjusted_interval()` deriva el intervalo internamente a través de `get_likelihood_score()`, que llama a `get_forecast_details(recording)` **sin pasar `now`** — usa `datetime.now()` internamente.
+Durante este paso quedó identificada una deuda preexistente: `snapshot(now=...)` computaba el forecast con el `now` del caller, pero `get_adjusted_interval()` derivaba el intervalo a través de `get_likelihood_score()` → `get_forecast_details(recording)` **sin pasar `now`**, por lo que usaba `datetime.now()` internamente.
 
-Esto significa que:
-- El forecast directo del snapshot usa el `now` caller-supplied.
-- El forecast implícito dentro del intervalo usa la hora real de ejecución.
+Esa inconsistencia quedó **cerrada en un bloque posterior** propagando `now` en toda la cadena:
 
-Esta diferencia **no fue introducida por esta optimización** (ya existía antes en `predict()` y `decide_queue()`), pero queda documentada como deuda técnica conocida.
+- `Precog.predict(..., now=...)`
+- `Precog.snapshot(..., now=...)`
+- `Precog.decide_queue(..., now=...)`
+- `HistoryManager.get_adjusted_interval(..., now=...)`
+- `HistoryManager.get_likelihood_score(..., now=...)`
 
-**Impacto práctico**: en condiciones normales la diferencia es de milisegundos y no afecta resultados. Podría ser relevante si se llegara a pasar un `now` significativamente distinto al tiempo real.
+Con eso, forecast e intervalo ajustado vuelven a quedar congelados sobre el mismo instante temporal cuando el caller provee `now` explícito.
 
 `predict()` y `decide_queue()` se mantienen públicos e inalterados para los consumidores existentes (`live_forecast_dialog.py`, `recording_info_dialog.py`, tests).
 
@@ -696,24 +698,19 @@ No hay problema de thread boundary porque qasync ejecuta el event loop de asynci
 
 ## Qué sigue pendiente
 
-1. **Deuda técnica: Próximo bloque recomendado — Time-consistency debt en `Precog.snapshot()`**
-   - `snapshot(now=...)` computa el forecast con `now`, pero `get_adjusted_interval()` deriva el intervalo internamente llamando a `get_likelihood_score()` que usa `datetime.now()` internamente (sin pasar `now`).
-   - Esto ya está documentado en el Paso 9.
-   - Es la siguiente prioridad porque afecta la consistencia de los datos del snapshot bajo tests y en transiciones de hora.
-
-2. **Baja prioridad: revisar `recording_info_dialog.py` para snapshot**
+1. **Baja prioridad: revisar `recording_info_dialog.py` para snapshot**
    - No es urgente porque es un diálogo bajo demanda.
    - Su impacto es mucho menor que el de `recordings_view.py`.
 
-3. **Baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
+2. **Baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
    - Requiere absorber la lógica de clustering o reescribir la máquina de estados.
    - Queda para una fase posterior de consolidación más profunda.
 
 ## Punto de reentrada para futuras sesiones
 
-La notificación Precog → UI ya está implementada (Paso 10). El siguiente paso recomendado es:
+La notificación Precog → UI ya está implementada (Paso 10) y la deuda de consistencia temporal ya quedó cerrada. El siguiente paso recomendado es:
 
-1. Abordar la **deuda de consistencia temporal** en `Precog.snapshot()` (time-consistency debt),
+1. evaluar si `recording_info_dialog.py` gana algo real migrando a `Precog.snapshot()` o si puede seguir con wrappers livianos,
 2. dejar este mismo documento actualizado al cierre de cada bloque para preservar continuidad entre sesiones.
 
 ## Referencias

@@ -52,7 +52,7 @@ class PrecogPredictTests(unittest.TestCase):
         now = datetime(2026, 5, 27, 20, 0, 0)
 
         direct_forecast = HistoryManager.get_forecast_details(recording, now=now)
-        direct_interval = HistoryManager.get_adjusted_interval(recording, 300)
+        direct_interval = HistoryManager.get_adjusted_interval(recording, 300, now=now)
 
         result = Precog.predict(recording, now=now)
 
@@ -112,7 +112,7 @@ class PrecogPredictTests(unittest.TestCase):
         now = datetime(2026, 5, 27, 20, 30, 0)  # Tuesday 20:30
 
         direct_forecast = HistoryManager.get_forecast_details(recording, now=now)
-        direct_interval = HistoryManager.get_adjusted_interval(recording, 300)
+        direct_interval = HistoryManager.get_adjusted_interval(recording, 300, now=now)
 
         result = Precog.predict(recording, now=now)
 
@@ -568,6 +568,89 @@ class PrecogSnapshotOptimizationTests(unittest.TestCase):
         self.assertEqual(snap.likelihood, snap.forecast_details["score"])
         self.assertEqual(snap.confidence, snap.forecast_details["confidence"])
         self.assertEqual(snap.reason_key, snap.forecast_details.get("reason_key", ""))
+
+
+class PrecogTemporalConsistencyTests(unittest.TestCase):
+    """Verify that `now` propagates all the way through to get_adjusted_interval.
+
+    Before the fix, Precoq methods ignored `now` when calling get_adjusted_interval,
+    which always used datetime.now() internally.  These tests prove the chain is
+    complete: now → get_adjusted_interval → get_likelihood_score → get_forecast_details.
+    """
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_predict_adjusted_interval_matches_direct_with_same_now(self, _mock_rand):
+        """Precog.predict(now=X) must produce same adjusted_interval as direct call with same now=X."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        result = Precog.predict(recording, now=now)
+        direct = HistoryManager.get_adjusted_interval(recording, 300, now=now)
+
+        self.assertEqual(result.adjusted_interval, direct)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_adjusted_interval_matches_direct_with_same_now(self, _mock_rand):
+        """Precog.snapshot(now=X) must produce same adjusted_interval as direct call with same now=X."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        snap = Precog.snapshot(recording, now=now)
+        direct = HistoryManager.get_adjusted_interval(recording, 300, now=now)
+
+        self.assertEqual(snap.adjusted_interval, direct)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_decide_queue_adjusted_interval_matches_direct_with_same_now(self, _mock_rand):
+        """Precog.decide_queue(now=X) must produce same adjusted_interval as direct call with same now=X."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+
+        decision = Precog.decide_queue(recording, base_interval=300, now=now)
+        direct = HistoryManager.get_adjusted_interval(recording, 300, now=now)
+
+        self.assertEqual(decision.adjusted_interval, direct)
+
+    def test_different_now_produces_different_likelihood(self):
+        """Different `now` values must produce different likelihoods when temporal
+        context (day of week, hour) affects the forecast score."""
+        recording = _make_recording(
+            historical_intervals={"2": [20]},  # Wednesday 20:00
+        )
+
+        # During active hours (Wednesday 20:30) — higher likelihood
+        active_now = datetime(2026, 5, 27, 20, 30, 0)   # Wednesday 20:30
+        # Outside active hours — lower likelihood
+        off_now = datetime(2026, 5, 27, 10, 0, 0)       # Wednesday 10:00
+
+        with patch("app.core.recording.history_manager.random.randint", return_value=150):
+            result_active = Precog.predict(recording, now=active_now)
+            result_off = Precog.predict(recording, now=off_now)
+            direct_active = HistoryManager.get_adjusted_interval(recording, 300, now=active_now)
+            direct_off = HistoryManager.get_adjusted_interval(recording, 300, now=off_now)
+
+        # Likelihood must reflect temporal context
+        self.assertGreater(result_active.likelihood, result_off.likelihood,
+                          "Likelihood should be higher during active window")
+        # Adjusted interval must reflect the chain: now → likelihood → interval
+        self.assertEqual(result_active.adjusted_interval, direct_active,
+                         "now must propagate through predict → get_adjusted_interval")
+        self.assertEqual(result_off.adjusted_interval, direct_off,
+                         "now must propagate through predict → get_adjusted_interval")
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_backward_compat_no_now(self, _mock_rand):
+        """Calling predict/snapshot/decide_queue without now must not crash (backward compat)."""
+        recording = _make_recording()
+
+        pred = Precog.predict(recording)
+        self.assertIsInstance(pred, PrecogPrediction)
+
+        snap = Precog.snapshot(recording)
+        self.assertIsInstance(snap, PrecogSnapshot)
+
+        dec = Precog.decide_queue(recording)
+        self.assertGreaterEqual(dec.likelihood, 0.0)
 
 
 if __name__ == "__main__":
