@@ -177,21 +177,30 @@ Objetivo:
 
 ## Paso 3 — Migrar `live_forecast_dialog.py`
 
-Revisado y migrado parcialmente:
+**Estado**: ✅ completado.
+
+`app/qt/components/live_forecast_dialog.py` quedó consolidado sobre `Precog.snapshot()` como consumidor de UI de mayor valor pendiente.
+
+### Resultado real
+
+- `ForecastItemWidget.update_time_info()` ya no combina `Precog.time_state()` + `Precog.predict()`; ahora reutiliza `snapshot.time_state` y `snapshot.forecast_details`.
+- `_populate_list()` ya no recalcula `Precog.predict()` ni `Precog.time_state()` por separado para score, filtro y render.
+- `_slot_minutes_until()` ahora lee `snapshot.forecast_details["next_slot_text"]` y `snapshot.time_state` desde la misma foto coherente del recording.
+- Se eliminó el wrapper residual `_get_forecast_time_info()` porque dejó de aportar valor.
+
+### Impacto
+
+- Se reduce recomputación duplicada en un diálogo que antes era el consumidor UI más pesado de Precog.
+- Cada recording usa una sola muestra coherente de estado predictivo al poblar el diálogo.
+- No cambió el comportamiento funcional esperado: el filtrado, el orden por proximidad y el render siguen basándose en los mismos datos, ahora reunidos en `PrecogSnapshot`.
+
+### Archivos afectados
 
 - `app/qt/components/live_forecast_dialog.py`
 
-Este archivo tiene lógica derivada/duplicada (`_get_forecast_time_info`) que usaba `HistoryManager.cluster_hours()`. No se migró esa parte porque requeriría absorber la lógica de clustering en Precog o rehacer el estado de UI, lo que excede el cambio mínimo seguro acordado.
+### Verificación ejecutada
 
-### Qué se migró
-- `HistoryManager.get_forecast_details()` → `Precog.predict(...).forecast_details` (2 usos en `ForecastItemWidget.update_time_info` y `_slot_minutes_until`).
-- `HistoryManager.get_likelihood_score()` → `Precog.predict(...).likelihood` (1 uso en `_populate_list`).
-
-### Qué NO se migró y por qué
-- `HistoryManager.cluster_hours(active_hours)` dentro de `_get_forecast_time_info()`. Era un llamado a un método público de `HistoryManager`; `Precog` no lo exponía. Migrarlo requeriría o bien añadirlo a Precog (sobreingeniería) o reescribir la máquina de estados del diálogo (cambio de comportamiento). Se deja pendiente para una fase posterior de consolidación. Nota: `Precog.time_state()` terminó absorbiendo `_get_forecast_time_info()` y ahora llama a `HistoryManager._cluster_info()` internamente, pero `cluster_hours()` como tal sigue residiendo solo en `HistoryManager`.
-
-### Estado del import
-- El archivo ya no importa `HistoryManager`. El import residual se eliminó cuando `Precog.time_state()` absorbió `_get_forecast_time_info()`. Queda documentado aquí como registro de que se consideró pero ya se resolvió en un paso posterior.
+- `python -m unittest discover` → OK (129 tests)
 
 ## Paso 4 — Mover la decisión de cola a Precog
 
@@ -391,13 +400,13 @@ Verificación ejecutada:
 
 ### Limpieza post-migración (auditoría)
 
-Se verificó que no quedan accesos directos a `HistoryManager` desde UI. El único residual es `live_forecast_dialog.py:_get_forecast_time_info()`, ya documentado en el Paso 3 como pendiente para una fase posterior.
+Se verificó que no quedan accesos directos relevantes a `HistoryManager` desde UI en los consumidores principales de Precog.
 
 Consumidores actuales:
 - ✅ `record_manager.py` — snapshot
 - ✅ `recording_card.py` — snapshot
 - ✅ `recordings_view.py` — snapshot
-- 🔶 `live_forecast_dialog.py` — predict + time_state (pendiente de consolidación mayor)
+- ✅ `live_forecast_dialog.py` — snapshot
 - 🔶 `recording_info_dialog.py` — predict (bajo impacto, diálogo bajo demanda)
 
 ### Archivos afectados en Paso 8
@@ -445,7 +454,7 @@ Además del checklist anterior, hoy el estado real del repo ya confirma esto:
 - `recording_card.py` ya consume snapshot unificado.
 - `recordings_view.py` ya consume `Precog.snapshot()` a través de una cache de badges que evita computar `Precog.snapshot()` en el hot path de `paint()`, con el queue key proveniente de `Precog.stable_queue_key()` para evitar jitter en la UI.
 - `recording_info_dialog.py` ya migró a Precog, pero todavía usa wrapper puntual en lugar de snapshot completo.
-- `live_forecast_dialog.py` ya quedó absorbido en lo temporal por `Precog.time_state()` y ya no conserva el import residual a `HistoryManager`.
+- `live_forecast_dialog.py` ya consume `Precog.snapshot()` como fuente única para likelihood, estado temporal, forecast y orden por proximidad.
 - Se añadió `Precog.stable_queue_key(recording)` que devuelve un queue key basado en el intervalo base configurado (sin jitter), con fallback a 60 segundos (legacy UI) cuando `loop_time_seconds` es `None`. Esto restaura la semántica del viejo `_queue_badge()`.
 - El hot path de `paint()` en `RecordingsView` ahora lee de `model._badge_cache` en lugar de llamar `Precog.snapshot()`. La cache se precarga desde el timer de 1 segundo (`_on_refresh_tick`).
 
@@ -458,26 +467,25 @@ Además del checklist anterior, hoy el estado real del repo ya confirma esto:
    - `test_recordings_view_precog.py` actualizado para probar `_snapshot_data()` contra `Precog.snapshot`.
 
 2. ✅ **Cerrar la limpieza post-migración (auditoría)**
-   - Se verificó que no quedan accesos directos a `HistoryManager` desde UI (el único residual es `live_forecast_dialog.py:_get_forecast_time_info()`, ya documentado).
-   - `recording_info_dialog.py` podría migrarse a snapshot en una fase posterior, pero su impacto es bajo por ser un diálogo bajo demanda.
-   - `live_forecast_dialog.py` sigue usando `Precog.predict()` y `Precog.time_state()` sin snapshot; migrarlo requeriría absorber la lógica de clustering, que queda fuera del alcance de cambio mínimo seguro.
+   - Se verificó que no quedan accesos directos relevantes a `HistoryManager` desde UI.
+   - `recording_info_dialog.py` podría refinarse en una fase posterior, pero su impacto es bajo por ser un diálogo bajo demanda.
+   - `live_forecast_dialog.py` ya quedó consolidado sobre `Precog.snapshot()` sin ampliar superficie pública innecesaria.
 
 ## Qué sigue pendiente
 
 Pendientes reales, ordenados por prioridad para retomar sin perder contexto:
 
-1. **Evaluar notificaciones de cambios Precog → UI**
-   - este paso queda deliberadamente después de cerrar snapshot como fuente principal,
-   - la cache de badges introducida en la auditoría post-migración reduce algo la urgencia,
-   - no hay implementación iniciada todavía.
+1. **Evaluar si la consolidación UI de Precog puede darse por cerrada**
+   - `recording_card.py`, `recordings_view.py` y `live_forecast_dialog.py` ya consumen snapshot,
+   - el único consumidor UI liviano que queda fuera del snapshot completo es `recording_info_dialog.py`.
 
-2. **Opcional de baja prioridad: revisar `recording_info_dialog.py` para snapshot**
-   - no es urgente porque es un diálogo bajo demanda,
-   - su impacto es mucho menor que el de `recordings_view.py`.
+2. **Baja prioridad: revisar `recording_info_dialog.py`**
+   - no para moverlo a `snapshot()` a ciegas,
+   - sino para decidir si conviene dejarlo en `Precog.predict()` o crear un helper todavía más liviano para su uso puntual.
 
-3. **Opcional de baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
-   - requiere absorber la lógica de clustering o reescribir la máquina de estados, lo que excede cambio mínimo seguro,
-   - queda para una fase posterior de consolidación más profunda.
+3. **Baja prioridad: documentar cierre formal del tramo de consolidación de consumidores UI**
+   - si no aparece otro consumidor relevante,
+   - el siguiente trabajo valioso ya deja de ser migración de lectores y pasa a mejoras posteriores sobre la API de Precog.
 
 ## Cerrado en esta auditoría
 
@@ -698,20 +706,21 @@ No hay problema de thread boundary porque qasync ejecuta el event loop de asynci
 
 ## Qué sigue pendiente
 
-1. **Baja prioridad: revisar `recording_info_dialog.py` para snapshot**
+1. **Baja prioridad: revisar `recording_info_dialog.py`**
    - No es urgente porque es un diálogo bajo demanda.
-   - Su impacto es mucho menor que el de `recordings_view.py`.
+   - La decisión correcta no es necesariamente moverlo a `snapshot()`, sino confirmar si debe quedarse en un path liviano.
 
-2. **Baja prioridad: migrar `live_forecast_dialog.py` a `Precog.snapshot()`**
-   - Requiere absorber la lógica de clustering o reescribir la máquina de estados.
-   - Queda para una fase posterior de consolidación más profunda.
+2. **Baja prioridad: decidir si la consolidación UI de Precog ya puede cerrarse formalmente**
+   - `live_forecast_dialog.py` ya no es pendiente,
+   - el próximo valor puede estar más en simplificar/documentar que en seguir migrando consumidores.
 
 ## Punto de reentrada para futuras sesiones
 
-La notificación Precog → UI ya está implementada (Paso 10) y la deuda de consistencia temporal ya quedó cerrada. El siguiente paso recomendado es:
+La notificación Precog → UI ya está implementada (Paso 10), la deuda de consistencia temporal ya quedó cerrada y `live_forecast_dialog.py` ya fue consolidado sobre `Precog.snapshot()`. El siguiente paso recomendado es:
 
-1. evaluar si `recording_info_dialog.py` gana algo real migrando a `Precog.snapshot()` o si puede seguir con wrappers livianos,
-2. dejar este mismo documento actualizado al cierre de cada bloque para preservar continuidad entre sesiones.
+1. decidir si `recording_info_dialog.py` merece un helper más liviano o si simplemente debe quedarse en `Precog.predict()`,
+2. evaluar si el tramo de consolidación de consumidores UI de Precog ya puede darse por cerrado,
+3. dejar este mismo documento actualizado al cierre de cada bloque para preservar continuidad entre sesiones.
 
 ## Referencias
 
