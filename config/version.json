@@ -6,7 +6,7 @@
   "open_source_license": "Apache License 2.0",
   "version_updates": [
     {
-      "version": "1.1.2",
+      "version": "1.1.3",
       "kernel_version": "4.0.8",
       "updates": {
         "en": [
@@ -20,7 +20,7 @@
       "announcement": {
         "en": [
           {
-            "title": "StreamCapEvo v1.1.2 is officially released",
+            "title": "StreamCapEvo v1.1.3 is officially released",
             "content": "New multi-platform support, web adaptation for mobile, bug fixes, and stability improvements"
           },
           {
@@ -34,7 +34,7 @@
         ],
         "es": [
           {
-            "title": "StreamCapEvo v1.1.2 lanzado oficialmente",
+            "title": "StreamCapEvo v1.1.3 lanzado oficialmente",
             "content": "Nuevo soporte multiplataforma, adaptación web para móviles, corrección de errores y mejoras de estabilidad"
           },
           {
