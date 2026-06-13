@@ -442,10 +442,9 @@ class MainWindow(QMainWindow):
                 self.app.event_bus.publish("app_closing")
 
             if hasattr(self.app, "record_manager") and self.app.record_manager:
-                # Disable monitoring immediately — prevents check cycles from
-                # restarting recordings during shutdown
-                for rec in self.app.record_manager.recordings:
-                    rec.monitor_status = False
+                # Stop the monitoring engine without persisting recordings as
+                # manually disabled. Users expect monitor_status to survive an
+                # app shutdown and resume on next launch.
                 self.app.record_manager.predictor_metrics.interrupt_pending_operations()
 
             # Stop all active recordings
