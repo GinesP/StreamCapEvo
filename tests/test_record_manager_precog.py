@@ -237,6 +237,9 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             await manager.check_all_live_status()
 
             self.assertIs(recording._last_snapshot, mock_snap)
+            # Per-recording fallback values stored alongside snapshot
+            self.assertEqual(recording._last_queue_key, "F")
+            self.assertEqual(recording._last_likelihood, 0.95)
             app.event_bus.publish.assert_any_call(
                 "precog_snapshot_batch", {"rec-test": mock_snap}
             )
@@ -386,6 +389,52 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             await manager.stop_monitor_recording(recording)
 
             self.assertIsNone(recording._last_snapshot)
+
+        asyncio.run(_run())
+
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    def test_stop_monitor_preserves_fallback_values(self, mock_metrics):
+        """stop_monitor_recording clears _last_snapshot but preserves _last_queue_key
+        and _last_likelihood for UI fallback."""
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            recording._last_queue_key = "S"
+            recording._last_likelihood = 0.42
+            recording._last_snapshot = MagicMock()
+            GlobalRecordingState.recordings = [recording]
+
+            await manager.stop_monitor_recording(recording)
+
+            # _last_snapshot cleared but fallback values preserved
+            self.assertIsNone(recording._last_snapshot)
+            self.assertEqual(recording._last_queue_key, "S")
+            self.assertEqual(recording._last_likelihood, 0.42)
 
         asyncio.run(_run())
 

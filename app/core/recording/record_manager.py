@@ -444,6 +444,8 @@ class RecordingManager:
             recording.loop_time_seconds = base_interval
             snap = Precog.snapshot(recording, now=None, include_debug=True)  # TEMP-DIAG
             recording._last_snapshot = snap
+            recording._last_queue_key = snap.queue_key
+            recording._last_likelihood = snap.likelihood
             _precog_snapshots[recording.rec_id] = snap
             likelihood = snap.likelihood
 

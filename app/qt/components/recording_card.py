@@ -491,9 +491,11 @@ class QtRecordingCard(QFrame):
             score = snap.likelihood
             is_stale = snap.is_stale
         else:
-            q_t = Precog.stable_queue_key(rec)
+            _qk = getattr(rec, "_last_queue_key", None)
+            q_t = _qk if _qk is not None else Precog.stable_queue_key(rec)
             q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
-            score = 0.0
+            _lh = getattr(rec, "_last_likelihood", None)
+            score = _lh if _lh is not None else getattr(rec, "priority_score", 0.0)
             is_stale = RecordingStateLogic.is_stale(rec)
 
         cache_attr = f"_badge_state_{prefix}"

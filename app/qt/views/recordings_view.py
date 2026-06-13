@@ -317,18 +317,21 @@ class RecordingListDelegate(QStyledItemDelegate):
         """Return (queue_key, queue_color, likelihood, is_stale).
 
         Uses Precog.stable_queue_key (base interval, no jitter) so the
-        badge never flickers. Likelihood and is_stale are zeroed — the
-        only consumers that need actual values are the model._badge_cache
-        entries populated by _on_precog_snapshot_batch from operational
-        snapshots.
+        badge never flickers. Likelihood falls back to recording.priority_score
+        (already available, no Precog.snapshot call) so the likelihood badge
+        remains visible even before the first operational cycle populates
+        _badge_cache.
 
         This must NOT call Precog.snapshot() — that would create a
         competing badge source that flickers against the operational
         cycle data.
         """
-        qk = Precog.stable_queue_key(rec)
+        _qk = getattr(rec, "_last_queue_key", None)
+        qk = _qk if _qk is not None else Precog.stable_queue_key(rec)
         qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
-        return qk, qc, 0.0, RecordingStateLogic.is_stale(rec)
+        _lh = getattr(rec, "_last_likelihood", None)
+        likelihood = _lh if _lh is not None else getattr(rec, "priority_score", 0.0)
+        return qk, qc, likelihood, RecordingStateLogic.is_stale(rec)
 
 
 class QtRecordingsView(QWidget):

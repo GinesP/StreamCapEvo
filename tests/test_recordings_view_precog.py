@@ -12,6 +12,9 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         """_snapshot_data must NOT call Precog.snapshot."""
         rec = MagicMock()
         rec.loop_time_seconds = 60
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         RecordingListDelegate._snapshot_data(rec)
         mock_snapshot.assert_not_called()
 
@@ -19,6 +22,9 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         """Stable queue key based on loop_time_seconds."""
         rec = MagicMock()
         rec.loop_time_seconds = 60  # ≤60 → "F"
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
         self.assertEqual(qk, "F")
         self.assertEqual(likelihood, 0.0)
@@ -28,14 +34,31 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         """When loop_time_seconds is None, defaults to 60 → 'F'."""
         rec = MagicMock()
         rec.loop_time_seconds = None
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
         self.assertEqual(qk, "F")
         self.assertEqual(likelihood, 0.0)
 
-    def test_likelihood_always_zero_in_fallback(self):
-        """Fallback likelihood is always 0.0."""
+    def test_fallback_likelihood_uses_priority_score(self):
+        """Fallback likelihood uses recording.priority_score instead of 0."""
         rec = MagicMock()
         rec.loop_time_seconds = 300  # >180 → "S"
+        rec.priority_score = 0.75
+        rec._last_queue_key = None
+        rec._last_likelihood = None
+        qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
+        self.assertEqual(likelihood, 0.75)
+        self.assertEqual(qk, "S")
+
+    def test_fallback_likelihood_zero_when_priority_zero(self):
+        """Fallback likelihood is 0 when priority_score is 0."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 300
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
         self.assertEqual(likelihood, 0.0)
         self.assertEqual(qk, "S")
@@ -46,6 +69,9 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         mock_is_stale.return_value = True
         rec = MagicMock()
         rec.loop_time_seconds = 180  # ≤180 → "M"
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
         self.assertTrue(stale)
         mock_is_stale.assert_called_once_with(rec)
@@ -57,10 +83,46 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         mock_is_stale.return_value = False
         rec = MagicMock()
         rec.loop_time_seconds = 300
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
         self.assertFalse(stale)
         mock_is_stale.assert_called_once_with(rec)
         self.assertEqual(qk, "S")
+
+    def test_fallback_uses_last_queue_key(self):
+        """Fallback queue key uses recording._last_queue_key when available."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 300  # would be "S" via stable
+        rec.priority_score = 0.0
+        rec._last_queue_key = "F"
+        rec._last_likelihood = None
+        qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
+        self.assertEqual(qk, "F")
+        self.assertEqual(likelihood, 0.0)
+
+    def test_fallback_uses_last_likelihood(self):
+        """Fallback likelihood uses recording._last_likelihood when available."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 180
+        rec.priority_score = 0.0
+        rec._last_queue_key = "M"
+        rec._last_likelihood = 0.85
+        qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
+        self.assertEqual(qk, "M")
+        self.assertEqual(likelihood, 0.85)
+
+    def test_fallback_falls_through_when_no_last_values(self):
+        """Fallback falls through to stable_queue_key / priority_score when _last_* are None."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 300
+        rec.priority_score = 0.0
+        rec._last_queue_key = None
+        rec._last_likelihood = None
+        qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
+        self.assertEqual(qk, "S")
+        self.assertEqual(likelihood, 0.0)
 
     @patch("app.core.recording.precog.Precog.snapshot")
     def test_badge_data_reads_from_model_cache(self, mock_snapshot):
