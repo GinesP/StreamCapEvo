@@ -178,6 +178,24 @@ class EventBus:
         """Return a list of all topics with active subscribers."""
         return [t for t, subs in self._subscribers.items() if subs]
 
+    def diagnostic_report(self) -> dict:
+        """Return a snapshot of current subscriber state for diagnostics.
+
+        Returns:
+            dict with keys: topics (per-topic counts), total_subscribers, topic_count.
+        """
+        topics: dict[str, int] = {}
+        total = 0
+        for topic, subs in self._subscribers.items():
+            if subs:
+                topics[topic] = len(subs)
+                total += len(subs)
+        return {
+            "topics": topics,
+            "total_subscribers": total,
+            "topic_count": len(topics),
+        }
+
     def __repr__(self) -> str:
         topic_info = ", ".join(f"{t}={len(s)}" for t, s in self._subscribers.items() if s)
         return f"<EventBus topics=[{topic_info}]>"

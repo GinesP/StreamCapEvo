@@ -316,19 +316,19 @@ class RecordingListDelegate(QStyledItemDelegate):
     def _snapshot_data(rec) -> tuple[str, str, float, bool]:
         """Return (queue_key, queue_color, likelihood, is_stale).
 
-        Queue key uses the **stable** (base) interval — no jitter, default 60.
-        Likelihood and is_stale come from Precog.snapshot for accuracy.
+        Uses Precog.stable_queue_key (base interval, no jitter) so the
+        badge never flickers. Likelihood and is_stale are zeroed — the
+        only consumers that need actual values are the model._badge_cache
+        entries populated by _on_precog_snapshot_batch from operational
+        snapshots.
 
-        Callers SHOULD pre-populate model._badge_cache and prefer
-        _badge_data() to avoid Precog.snapshot() in the paint hot path.
+        This must NOT call Precog.snapshot() — that would create a
+        competing badge source that flickers against the operational
+        cycle data.
         """
-        try:
-            qk = Precog.stable_queue_key(rec)
-            qc = _QUEUE_KEY_COLORS[qk]
-            snap = Precog.snapshot(rec)
-            return qk, qc, snap.likelihood, snap.is_stale
-        except Exception:
-            return "?", "#9E9E9E", 0.0, False
+        qk = Precog.stable_queue_key(rec)
+        qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
+        return qk, qc, 0.0, False
 
 
 class QtRecordingsView(QWidget):
@@ -864,7 +864,7 @@ class QtRecordingsView(QWidget):
             rid = getattr(rec, "rec_id", None) or id(rec)
             snap = snapshots.get(rid)
             if snap is not None:
-                qk = Precog.stable_queue_key(rec)
+                qk = snap.queue_key
                 qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
                 cache[rid] = (qk, qc, snap.likelihood, snap.is_stale)
 

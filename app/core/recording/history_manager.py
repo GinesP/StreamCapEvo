@@ -28,6 +28,7 @@ class HistoryManager:
                 "window_text": "",
                 "reason_key": "",
                 "avg_delay_minutes": None,
+                "evidence_weight": 0.0,
             }
 
         today = now.weekday()
@@ -91,7 +92,11 @@ class HistoryManager:
             next_slot_text = f"{start_h:02d}:{start_m:02d}"
             window_text = f"{start_h:02d}:{start_m:02d}-{end_h:02d}:{end_m:02d}"
 
-        confidence_boost = min(0.18, len(sessions) * 0.015)
+        evidence_count = len(sessions)
+        # Evidence-strength factor: near 0 for sparse sessions, 1.0 at 8+ sessions.
+        # Prevents confidence_boost from inflating weak samples.
+        evidence_weight = min(1.0, evidence_count / 8.0)
+        confidence_boost = min(0.18, evidence_count * 0.015) * evidence_weight
         reason_key = "live_forecast_dialog.reason_session_pattern" if session_score >= 0.35 else ""
 
         return {
@@ -101,6 +106,7 @@ class HistoryManager:
             "window_text": window_text,
             "reason_key": reason_key,
             "avg_delay_minutes": avg_delay,
+            "evidence_weight": evidence_weight,
         }
 
     @staticmethod
@@ -138,6 +144,75 @@ class HistoryManager:
         return windows
 
     @staticmethod
+    def _classify_window(recording: Recording, now: datetime) -> tuple[str, str]:
+        """Classify current window state and confidence for queue assignment.
+
+        Returns (state, confidence) where:
+          state      — "inside" | "approaching" | "degrading" | "outside"
+          confidence — "high"   | "medium"      | "low"
+
+        The window-based decision replaces the old monolithic score-threshold
+        approach.  Queue assignment uses (state, confidence) instead of raw
+        likelihood to keep checks focused on confirmed emission windows.
+        """
+        # --- INSIDE: currently live ---
+        if recording.is_live:
+            return ("inside", "high")
+
+        # --- Check scheduled windows (user-configured → always high confidence) ---
+        for start_dt, end_dt in HistoryManager._parse_scheduled_windows(recording, now):
+            if start_dt <= now <= end_dt:
+                return ("inside", "high")
+            minutes_until = int((start_dt - now).total_seconds() // 60)
+            if 0 < minutes_until <= 90:
+                return ("approaching", "high")
+
+        # --- Compute historical window confidence ---
+        day_str = str(now.weekday())
+        intervals = getattr(recording, "historical_intervals", {}) or {}
+        active_hours = sorted(set(intervals.get(day_str, [])))
+
+        window_conf = "low"
+        if active_hours and intervals:
+            consistency_score = max(0.0, getattr(recording, "consistency_score", 0.0))
+            days_breadth = len(intervals)
+            # 3+ days of evidence → full breadth weight
+            breadth_weight = min(1.0, days_breadth / 3.0)
+            # Combine consistency (pattern density) + breadth (pattern reach)
+            conf_val = consistency_score * 0.6 + breadth_weight * 0.4
+            if conf_val >= 0.7:
+                window_conf = "high"
+            elif conf_val >= 0.35:
+                window_conf = "medium"
+            # else stays "low"
+
+        # --- Check historical window ---
+        if active_hours:
+            current_minutes = now.hour * 60 + now.minute
+            nearest_hour = min(active_hours, key=lambda h: abs((h * 60) - current_minutes))
+            minute_distance = abs((nearest_hour * 60) - current_minutes)
+
+            # Inside historical window
+            if now.hour in active_hours:
+                return ("inside", window_conf)
+
+            # Approaching historical window (within 60 min)
+            if minute_distance <= 60:
+                return ("approaching", window_conf)
+
+            # Degrading — just left a cluster (within 30 min of its end)
+            clusters = HistoryManager.cluster_hours(active_hours)
+            for cluster in clusters:
+                cluster_end_hour = cluster[-1]
+                # cluster end is ~59 min past the hour
+                end_minutes = cluster_end_hour * 60 + 59
+                mins_since_end = current_minutes - end_minutes
+                if 0 < mins_since_end <= 30:
+                    return ("degrading", window_conf)
+
+        return ("outside", "low")
+
+    @staticmethod
     def cluster_hours(hours: list[int], max_gap: int = 4) -> list[list[int]]:
         if not hours:
             return []
@@ -159,9 +234,13 @@ class HistoryManager:
     def get_forecast_details(
         recording: Recording,
         now: datetime | None = None,
-        include_horizons: bool = True,
+        include_horizons: bool = False,
+        include_debug: bool = False,  # TEMP-DIAG
     ) -> dict:
         now = now or datetime.now()
+        # TEMP-DIAG: score stage tracking for queue assignment investigation
+        _score_stages = None if not include_debug else [("base", 0.15)]
+
         if recording.is_live:
             return {
                 "score": 1.0,
@@ -189,6 +268,8 @@ class HistoryManager:
             minute_distance = abs((nearest_hour * 60) - current_minutes)
             proximity = max(0.0, 1.0 - (minute_distance / 180.0))
             score = max(score, 0.25 + (proximity * 0.55))
+            if _score_stages is not None:  # TEMP-DIAG
+                _score_stages.append(("historical", score))
 
             future_hours = [h for h in active_hours if h * 60 >= current_minutes]
             if future_hours:
@@ -204,6 +285,8 @@ class HistoryManager:
 
             if now.hour in active_hours:
                 score = max(score, 0.92)
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("in_window", score))
                 confidence = "high"
                 reason_key = "live_forecast_dialog.reason_historical_window"
             elif minute_distance <= 60:
@@ -217,19 +300,33 @@ class HistoryManager:
             session_component = 0.20 + (session_stats["score"] * 0.65)
             if session_component > score:
                 score = session_component
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("session", score))
                 if session_stats["reason_key"]:
                     reason_key = session_stats["reason_key"]
             if session_stats["window_text"] and session_stats["next_slot_text"]:
                 window_text = session_stats["window_text"]
                 next_slot_text = session_stats["next_slot_text"]
             score += session_stats["confidence_boost"]
+            if _score_stages is not None:  # TEMP-DIAG
+                _score_stages.append(("session_conf", score))
 
-        score += min(0.12, max(0.0, getattr(recording, "consistency_score", 0.0)) * 0.12)
+        # Gate consistency by evidence breadth (distinct days with recorded data)
+        consistency_score_val = max(0.0, getattr(recording, "consistency_score", 0.0))
+        consistency_evidence_days = len(getattr(recording, "historical_intervals", {}) or {})
+        consistency_weight = min(1.0, consistency_evidence_days / 5.0)
+        score += min(0.12, consistency_score_val * 0.12) * consistency_weight
+        if _score_stages is not None:  # TEMP-DIAG
+            _score_stages.append(("consistency", score))
         score += min(0.12, max(0.0, getattr(recording, "priority_score", 0.0)) * 0.12)
+        if _score_stages is not None:  # TEMP-DIAG
+            _score_stages.append(("priority", score))
 
         for start_dt, end_dt in HistoryManager._parse_scheduled_windows(recording, now):
             if start_dt <= now <= end_dt:
                 score = max(score, 0.95)
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("scheduled_in", score))
                 confidence = "high"
                 reason_key = "live_forecast_dialog.reason_scheduled_window"
                 next_slot_text = start_dt.strftime("%H:%M")
@@ -239,6 +336,8 @@ class HistoryManager:
             minutes_until = int((start_dt - now).total_seconds() // 60)
             if 0 < minutes_until <= 90:
                 score = max(score, 0.70 + ((90 - minutes_until) / 90.0) * 0.15)
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("scheduled_soon", score))
                 confidence = "high" if minutes_until <= 30 else "medium"
                 reason_key = "live_forecast_dialog.reason_scheduled_soon"
                 next_slot_text = start_dt.strftime("%H:%M")
@@ -253,10 +352,16 @@ class HistoryManager:
                 inactive_days = 0
             if inactive_days > 14:
                 score *= 0.82
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("decay_14d", score))
             if inactive_days > 45:
                 score *= 0.70
+                if _score_stages is not None:  # TEMP-DIAG
+                    _score_stages.append(("decay_45d", score))
 
         score = max(0.05, min(1.0, score))
+        if _score_stages is not None:  # TEMP-DIAG
+            _score_stages.append(("final", score))
         if score >= 0.75:
             confidence = "high"
         elif score >= 0.45 and confidence != "high":
@@ -271,6 +376,10 @@ class HistoryManager:
             "avg_delay_minutes": session_stats.get("avg_delay_minutes"),
             "horizons": {},
         }
+
+        # TEMP-DIAG: attach score stage breakdown
+        if _score_stages is not None:
+            result["_score_debug"] = list(_score_stages)
 
         if include_horizons:
             result["horizons"] = {
@@ -297,28 +406,34 @@ class HistoryManager:
         recording: Recording, base_interval: int, now: datetime | None = None,
     ) -> int:
         """
-        Returns an adjusted check interval based on the likelihood score and priority score.
+        Returns an adjusted check interval based on window state and confidence.
         Applies a 15% jitter to prevent thundering herd / predictable bot patterns.
 
-        Likelihood always wins over deep sleep — if the predictor says the stream
-        is likely live (>= 0.5), we check faster regardless of historical deadness.
+        The old implementation used likelihood thresholds (>=0.9→60s, >=0.5→150s, …).
+        This version uses an explicit window-state/confidence concept so that scarce
+        check resources focus on confirmed emission windows.  Additive score boosts
+        (session_conf, consistency, priority) no longer inflate queue assignment
+        outside trustworthy windows.
         """
-        likelihood = HistoryManager.get_likelihood_score(recording, now=now)
+        window_state, window_conf = HistoryManager._classify_window(recording, now)
 
-        if likelihood >= 0.9:
-            target_interval = 60
-
-        elif likelihood >= 0.5:
-            target_interval = base_interval // 2
-
-        elif getattr(recording, 'priority_score', 0.0) < 0.01 and getattr(recording, 'live_check_count', 0) > 30:
-            target_interval = base_interval * 3
-
-        elif likelihood <= 0.15:
-            target_interval = int(base_interval * 1.5)
-
-        else:
-            target_interval = base_interval
+        if window_state == "inside":
+            if window_conf == "high" or window_conf == "medium":
+                target_interval = 60          # fast inside a trustworthy window
+            else:
+                target_interval = 150         # medium — uncertain window, be cautious
+        elif window_state == "approaching":
+            if window_conf == "high":
+                target_interval = 150         # medium — approaching confirmed window
+            else:
+                target_interval = base_interval  # slow — low confidence, don't accelerate
+        elif window_state == "degrading":
+            target_interval = 150             # medium — gradual degrade after window
+        else:  # outside
+            if getattr(recording, 'priority_score', 0.0) < 0.01 and getattr(recording, 'live_check_count', 0) > 30:
+                target_interval = base_interval * 3    # deep sleep
+            else:
+                target_interval = int(base_interval * 1.5)  # slow
 
         jitter_min = int(target_interval * 0.85)
         jitter_max = int(target_interval * 1.15)

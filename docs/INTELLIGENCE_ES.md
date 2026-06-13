@@ -5,6 +5,22 @@ Cubre desde la recolección de datos históricos hasta cómo se decide cuándo y
 
 ---
 
+## Fachada pública recomendada
+
+El sistema predictivo interno reside en `HistoryManager`, que sigue conteniendo la lógica de likelihood, forecast, clustering y adjusted_interval. Sin embargo, **Precog** es la fachada pública recomendada para todo consumo externo.
+
+### Mapa de necesidades → punto de entrada
+
+| Necesidad | Punto de entrada |
+|-----------|-----------------|
+| Estado predictivo completo + decisión operativa + datos de UI | `Precog.snapshot(recording, now=None)` |
+| Forecast liviano (solo ventana, confianza, score) | `Precog.forecast(recording, now=None)` |
+| Badge de cola estable (UI, sin jitter) | `Precog.stable_queue_key(recording)` |
+
+Los nuevos consumidores **deben** pasar por Precog a menos que exista una razón explícita para trabajar en la capa interna (`HistoryManager`).
+
+---
+
 ## 1. Arquitectura General
 
 El sistema tiene cuatro capas que operan en conjunto:

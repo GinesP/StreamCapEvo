@@ -484,15 +484,15 @@ class QtRecordingCard(QFrame):
 
     @staticmethod
     def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
-        try:
-            snap = getattr(rec, "_last_snapshot", None) or Precog.snapshot(rec)
-            q_t = Precog.stable_queue_key(rec)
-            q_c = _QUEUE_BADGE_COLORS[q_t]
+        snap = getattr(rec, "_last_snapshot", None)
+        if snap is not None:
+            q_t = snap.queue_key
+            q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
             score = snap.likelihood
             is_stale = snap.is_stale
-        except Exception:
-            q_t = "?"
-            q_c = "#9E9E9E"
+        else:
+            q_t = Precog.stable_queue_key(rec)
+            q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
             score = 0.0
             is_stale = False
 

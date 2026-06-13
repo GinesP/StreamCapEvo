@@ -7,6 +7,17 @@ from app.core.recording.precog import Precog, PrecogPrediction, PrecogSnapshot
 from app.models.recording.recording_model import Recording
 
 
+def _session(start_time_iso: str) -> dict:
+    """Build a live_session dict for testing."""
+    return {
+        "start_time": start_time_iso,
+        "end_time": None,
+        "duration_minutes": None,
+        "weekday": datetime.fromisoformat(start_time_iso).weekday(),
+        "start_hour": datetime.fromisoformat(start_time_iso).hour,
+    }
+
+
 def _make_recording(**overrides) -> Recording:
     defaults = {
         "rec_id": "rec-test",
@@ -540,25 +551,38 @@ class PrecogSnapshotOptimizationTests(unittest.TestCase):
             self.assertIsInstance(snap, PrecogSnapshot)
 
     def test_snapshot_top_level_get_forecast_details_calls(self):
-        """Proves optimization: only 2 top-level get_forecast_details calls
-        (1 explicit from snapshot + 1 implicit via get_adjusted_interval →
-        get_likelihood_score). Before optimization: 4 (1 explicit + 1 implicit
-        per each predict + decide_queue)."""
+        """Proves optimization: 1 get_forecast_details call (no horizon recursion)."""
         recording = _make_recording()
         now = datetime(2026, 5, 27, 20, 0, 0)
-        top_level_count = [0]
+        call_count = [0]
         original = HistoryManager.get_forecast_details
 
         def counting_side_effect(*args, **kwargs):
-            # Only count top-level calls: horizon-recurse passes include_horizons=False
-            if kwargs.get("include_horizons", True):
-                top_level_count[0] += 1
+            call_count[0] += 1
             return original(*args, **kwargs)
 
         with patch.object(HistoryManager, "get_forecast_details", side_effect=counting_side_effect):
             snap = Precog.snapshot(recording, now=now)
-            self.assertEqual(top_level_count[0], 2)
+            self.assertEqual(call_count[0], 1)
             self.assertIsInstance(snap, PrecogSnapshot)
+
+    def test_snapshot_horizons_off_by_default(self):
+        """Default snapshot does NOT compute horizon forecasts."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        snap = Precog.snapshot(recording, now=now)
+        self.assertEqual(snap.forecast_details.get("horizons", None), {})
+
+    def test_snapshot_horizons_on_when_requested(self):
+        """include_horizons=True computes horizon forecasts."""
+        recording = _make_recording()
+        now = datetime(2026, 5, 27, 20, 0, 0)
+        snap = Precog.snapshot(recording, now=now, include_horizons=True)
+        horizons = snap.forecast_details.get("horizons", None)
+        self.assertIsNotNone(horizons)
+        self.assertIn(15, horizons)
+        self.assertIn(30, horizons)
+        self.assertIn(60, horizons)
 
     def test_snapshot_internal_consistency(self):
         """All fields derived from forecast come from the same single call."""
@@ -686,6 +710,261 @@ class PrecogForecastTests(unittest.TestCase):
         ) as mock_ai:
             Precog.forecast(recording, now=now)
             mock_ai.assert_not_called()
+
+
+class WindowStateClassificationTests(unittest.TestCase):
+    """Verify _classify_window returns correct (state, confidence) for each scenario."""
+
+    def setUp(self):
+        self.now = datetime(2026, 5, 27, 20, 0, 0)  # Wednesday 20:00
+
+    def test_live_is_inside_high(self):
+        """Live streamer → inside, high confidence."""
+        rec = _make_recording()
+        rec.is_live = True
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "inside")
+        self.assertEqual(conf, "high")
+
+    def test_scheduled_window_inside_is_inside_high(self):
+        """Inside a scheduled window → inside, high confidence."""
+        rec = _make_recording(
+            scheduled_recording=True,
+            scheduled_start_time="19:30:00",
+            monitor_hours="2",
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "inside")
+        self.assertEqual(conf, "high")
+
+    def test_scheduled_window_approaching_is_approaching_high(self):
+        """30 min before scheduled window → approaching, high confidence."""
+        rec = _make_recording(
+            scheduled_recording=True,
+            scheduled_start_time="20:30:00",
+            monitor_hours="2",
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "approaching")
+        self.assertEqual(conf, "high")
+
+    def test_historical_inside_with_consistency_gives_medium_conf(self):
+        """Inside historical window with moderate consistency → inside, medium."""
+        rec = _make_recording(
+            historical_intervals={"2": [20, 21]},  # Wednesday 20-21
+            consistency_score=0.5,
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "inside")
+        # conf_val = 0.5*0.6 + (1/3)*0.4 = 0.30 + 0.13 = 0.43 → medium
+        self.assertEqual(conf, "medium")
+
+    def test_historical_inside_low_consistency_gives_low_conf(self):
+        """Inside historical window with weak consistency → inside, low."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},  # single day, single hour
+            consistency_score=0.0,               # no pattern density
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "inside")
+        # conf_val = 0.0*0.6 + (1/3)*0.4 = 0.13 → low
+        self.assertEqual(conf, "low")
+
+    def test_historical_approaching_with_high_conf_is_approaching_high(self):
+        """Approaching historical window with strong data → approaching, high."""
+        rec = _make_recording(
+            historical_intervals={
+                "2": [21],  # Wednesday 21:00 (60 min away)
+                "1": [21], "0": [21],  # 3 days breadth
+            },
+            consistency_score=1.0,
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "approaching")
+        # conf_val = 1.0*0.6 + (3/3)*0.4 = 0.6 + 0.4 = 1.0 → high
+        self.assertEqual(conf, "high")
+
+    def test_historical_approaching_low_conf_is_approaching_low(self):
+        """Approaching historical with weak evidence → approaching, low."""
+        rec = _make_recording(
+            historical_intervals={"2": [21]},  # Wednesday 21:00, 1 day
+            consistency_score=0.0,
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "approaching")
+        self.assertEqual(conf, "low")
+
+    def test_degrading_after_window_end(self):
+        """15 min after window end → degrading."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},
+            consistency_score=0.8,
+        )
+        # 21:15 — 15 min past window end (~20:59)
+        after = datetime(2026, 5, 27, 21, 15, 0)
+        state, conf = HistoryManager._classify_window(rec, after)
+        self.assertEqual(state, "degrading")
+
+    def test_outside_far_from_window(self):
+        """Far from any window → outside, low."""
+        rec = _make_recording()
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "outside")
+        self.assertEqual(conf, "low")
+
+    def test_outside_with_active_hours_but_no_proximity(self):
+        """Has historical data but far from current time → outside."""
+        rec = _make_recording(
+            historical_intervals={"2": [8]},  # Wednesday 08:00, far from 20:00
+            consistency_score=1.0,
+        )
+        state, conf = HistoryManager._classify_window(rec, self.now)
+        self.assertEqual(state, "outside")
+
+
+class WindowBasedQueueIntervalTests(unittest.TestCase):
+    """Verify get_adjusted_interval produces correct targets based on window state.
+
+    We mock randint to eliminate jitter for deterministic assertions.
+    """
+
+    def setUp(self):
+        self.now = datetime(2026, 5, 27, 20, 0, 0)  # Wednesday 20:00
+        self.base_interval = 300
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=60)
+    def test_inside_high_conf_returns_fast(self, _mock_rand):
+        """inside + high confidence → target 60s (F queue)."""
+        rec = _make_recording(
+            scheduled_recording=True,
+            scheduled_start_time="19:30:00",
+            monitor_hours="2",
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        self.assertEqual(interval, 60)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=60)
+    def test_inside_medium_conf_returns_fast(self, _mock_rand):
+        """inside + medium confidence → target 60s (F queue)."""
+        rec = _make_recording(
+            historical_intervals={"2": [20, 21]},
+            consistency_score=0.5,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        self.assertEqual(interval, 60)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_inside_low_conf_returns_medium(self, _mock_rand):
+        """inside + low confidence → target 150s (M queue)."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},
+            consistency_score=0.0,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        self.assertEqual(interval, 150)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_approaching_high_conf_returns_medium(self, _mock_rand):
+        """approaching + high confidence → target 150s (M queue)."""
+        rec = _make_recording(
+            scheduled_recording=True,
+            scheduled_start_time="20:30:00",
+            monitor_hours="2",
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        self.assertEqual(interval, 150)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=300)
+    def test_approaching_low_conf_returns_slow(self, _mock_rand):
+        """approaching + low confidence → target base_interval (S queue)."""
+        rec = _make_recording(
+            historical_intervals={"2": [21]},
+            consistency_score=0.0,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        # base_interval = 300 → S (since > 180)
+        self.assertGreater(interval, 180)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_degrading_returns_medium(self, _mock_rand):
+        """degrading → target 150s (M queue) — gradual degrade."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},
+        )
+        after = datetime(2026, 5, 27, 21, 15, 0)
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=after)
+        self.assertEqual(interval, 150)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=450)
+    def test_outside_returns_slow(self, _mock_rand):
+        """outside → target base*1.5 (S queue)."""
+        rec = _make_recording()
+        interval = HistoryManager.get_adjusted_interval(rec, self.base_interval, now=self.now)
+        # base*1.5 = 450 → S
+        self.assertGreater(interval, 180)
+
+
+class SparseEvidenceQueueRegressionTests(unittest.TestCase):
+    """REGRESSION: isolated streams with sparse evidence must NOT reach medium queue.
+
+    This is the core behavioral fix: additive boosts no longer inflate queue
+    assignment outside trustworthy windows.
+    """
+
+    def setUp(self):
+        self.now = datetime(2026, 5, 27, 20, 0, 0)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=450)
+    def test_sparse_sessions_no_window_returns_slow(self, _mock_rand):
+        """One session at wrong time, no historical_intervals → outside → S."""
+        rec = _make_recording(
+            live_sessions=[_session("2026-05-20T10:00:00")],
+            historical_intervals={},
+            consistency_score=0.0,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, 300, now=self.now)
+        self.assertGreater(interval, 180, f"Interval {interval} should be S (>180)")
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=450)
+    def test_session_conf_does_not_inflate_outside(self, _mock_rand):
+        """Even with session data and consistency, outside window → S queue."""
+        rec = _make_recording(
+            live_sessions=[_session(f"2026-05-{10+i:02d}T10:00:00") for i in range(8)],
+            historical_intervals={},  # no hist_intervals → outside
+            consistency_score=1.0,
+            priority_score=0.8,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, 300, now=self.now)
+        self.assertGreater(interval, 180, f"Interval {interval} should be S (>180)")
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_weak_historical_window_stays_cautious(self, _mock_rand):
+        """1-day historical with low consistency → inside+low → M (not F)."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},
+            consistency_score=0.0,
+        )
+        interval = HistoryManager.get_adjusted_interval(rec, 300, now=self.now)
+        # inside + low → 150 → M (NOT F = 60)
+        self.assertEqual(interval, 150)
+
+    @patch("app.core.recording.history_manager.random.randint", return_value=150)
+    def test_snapshot_window_fields_populated(self, _mock_rand):
+        """Precog.snapshot() must include window_state and window_confidence."""
+        rec = _make_recording(
+            historical_intervals={"2": [20]},
+            consistency_score=0.5,
+        )
+        snap = Precog.snapshot(rec, now=self.now)
+        self.assertEqual(snap.window_state, "inside")
+        self.assertEqual(snap.window_confidence, "medium")
+
+    def test_snapshot_outside_defaults(self):
+        """Streamer with no data → snapshot has outside+low window fields."""
+        rec = _make_recording()
+        snap = Precog.snapshot(rec, now=self.now)
+        self.assertEqual(snap.window_state, "outside")
+        self.assertEqual(snap.window_confidence, "low")
 
 
 if __name__ == "__main__":

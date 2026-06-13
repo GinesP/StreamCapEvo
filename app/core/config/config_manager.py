@@ -10,6 +10,7 @@ from typing import TypeVar
 import aiofiles
 import aiosqlite
 
+from ...utils.diagnostics import TEMP_DIAG_TAG  # TEMP-DIAG
 from ...utils.logger import logger
 from ..data_import.migration import detect_evo_data, forward_migrate
 
@@ -391,6 +392,25 @@ class ConfigManager:
                 data_str = json.dumps(rec, ensure_ascii=False)
                 if self._recordings_state_cache.get(rec_id) != data_str:
                     batch_data.append((rec_id, data_str))
+
+        # TEMP-DIAG: aggregate field-level change stats to reveal which fields churn each cycle
+        if batch_data:
+            from collections import Counter  # noqa: PLC0415  -- TEMP-DIAG, import on hot path
+            _field_changes: Counter = Counter()
+            for _rid, _new_str in batch_data:
+                _old_str = self._recordings_state_cache.get(_rid)
+                if _old_str:
+                    _old_dict = json.loads(_old_str)
+                    _new_dict = json.loads(_new_str)
+                    for _key in set(_old_dict) | set(_new_dict):
+                        if _old_dict.get(_key) != _new_dict.get(_key):
+                            _field_changes[_key] += 1
+            if _field_changes:
+                _top = _field_changes.most_common(15)
+                logger.info(
+                    f"TEMP-DIAG save_recordings_config: {len(batch_data)} records changed, "
+                    f"top field changes: {dict(_top)}{TEMP_DIAG_TAG}"
+                )
 
         if not ids_to_delete and not batch_data:
             return

@@ -37,6 +37,11 @@ class LanguageManager:
         if observer in self._observers:
             self._observers.remove(observer)
 
+    @property
+    def observer_count(self) -> int:
+        """Return the current number of registered language-change observers."""
+        return len(self._observers)
+
     def notify_observers(self):
         """Notify all observers that the language has changed."""
         for observer in self._observers:

@@ -33,7 +33,11 @@ class PrecogDecision:
 
 @dataclass(frozen=True)
 class PrecogSnapshot:
-    """Unified snapshot of a recording's predictive state at a point in time."""
+    """Unified snapshot of a recording's predictive state at a point in time.
+
+    Window state fields (window_state, window_confidence) drive the operational
+    queue decision — see HistoryManager._classify_window for logic.
+    """
 
     likelihood: float
     confidence: str
@@ -46,6 +50,8 @@ class PrecogSnapshot:
     is_stale: bool
     priority_score: float
     consistency_score: float
+    window_state: str = "outside"
+    window_confidence: str = "low"
 
 
 class Precog:
@@ -132,29 +138,63 @@ class Precog:
 
     @staticmethod
     def forecast(recording: Recording, now: datetime | None = None) -> dict[str, Any]:
-        """Return forecast details for lightweight UI consumers.
+        """Lightweight forecast-only entry point — returns forecast_details only.
 
-        Unlike predict(), this does NOT compute adjusted_interval.
-        Use when the caller only needs next_slot/window/confidence data.
+        Unlike snapshot(), this does NOT compute adjusted_interval, queue_key,
+        should_check, time_state, or any operational/UI scheduling fields.
+        Use when the caller only needs next_slot, window, confidence, and score.
+
+        Prefer this over snapshot() when you do NOT need operational decisions
+        or UI presentation state — it avoids unnecessary computation.
         """
         now = now or datetime.now()
         return HistoryManager.get_forecast_details(recording, now=now)
 
     @staticmethod
-    def snapshot(recording: Recording, now: datetime | None = None) -> PrecogSnapshot:
-        """Return a unified snapshot of predictive state for *recording* at *now*.
+    def snapshot(recording: Recording, now: datetime | None = None,
+                 include_debug: bool = False,
+                 include_horizons: bool = False) -> PrecogSnapshot:
+        """Preferred unified public entry point — complete predictive state snapshot.
+
+        Combines forecast, adjusted_interval, queue decision, time state, and staleness
+        into a single coherent picture. Use this for all consumers that need both
+        operational data (likelihood, queue, interval) and UI presentation state.
 
         Core values (forecast, adjusted_interval) are computed once and shared
         across derived fields — avoids the 4× get_forecast_details and 2×
         get_adjusted_interval that calling predict() + decide_queue() would
         produce independently.
+
+        Set *include_horizons* = ``True`` when the caller needs +15/+30/+60
+        horizon scores (e.g. the live forecast dialog tooltip).  Default is
+        ``False`` to avoid the 3× recursive forecast computation on the
+        operational hot path.
+
+        This is the recommended entry point for new consumers.
         """
         now = now or datetime.now()
-        forecast = HistoryManager.get_forecast_details(recording, now=now)
+        forecast = HistoryManager.get_forecast_details(
+            recording, now=now, include_debug=include_debug,
+            include_horizons=include_horizons,
+        )
         base_interval = getattr(recording, "loop_time_seconds", None) or Precog.DEFAULT_BASE_INTERVAL
 
         adjusted_interval = HistoryManager.get_adjusted_interval(recording, base_interval, now=now)
+        pre_cap_interval = adjusted_interval  # TEMP-DIAG
         adjusted_interval = Precog._apply_favorite_cap(adjusted_interval, recording)
+
+        # TEMP-DIAG: favorite cap debug info
+        if include_debug:
+            cap_applied = (adjusted_interval != pre_cap_interval)
+            if "_score_debug" not in forecast:
+                forecast["_score_debug"] = {}
+            if isinstance(forecast.get("_score_debug"), list):
+                # Convert list to dict for additional fields
+                forecast["_score_debug"] = {"stages": forecast["_score_debug"]}
+            forecast["_score_debug"]["pre_cap_interval"] = pre_cap_interval
+            forecast["_score_debug"]["cap_applied"] = cap_applied
+
+        window_state, window_confidence = HistoryManager._classify_window(recording, now)
 
         return PrecogSnapshot(
             likelihood=forecast["score"],
@@ -172,6 +212,8 @@ class Precog:
             is_stale=RecordingStateLogic.is_stale(recording, now=now),
             priority_score=getattr(recording, "priority_score", 0.0),
             consistency_score=getattr(recording, "consistency_score", 0.0),
+            window_state=window_state,
+            window_confidence=window_confidence,
         )
 
     @staticmethod
@@ -192,7 +234,14 @@ class Precog:
 
     @staticmethod
     def stable_queue_key(recording: Recording) -> str:
-        """Stable queue key for UI badge — base (configured) interval only, no jitter.
+        """UI badge queue key — stable across cycles, based on configured interval only.
+
+        Returns a queue key (F/M/S) derived from the configured *loop_time_seconds*
+        without operational jitter. This guarantees the badge never flickers.
+
+        Do NOT use this for operational scheduling decisions — it ignores
+        adjusted_interval, jitter, and the favorite cap. Use snapshot().queue_key
+        or decide_queue().queue_key for operational purposes.
 
         The old badge path used *loop_time_seconds* or 60 directly without
         adjustment/jitter.  This restores that semantics so the badge never

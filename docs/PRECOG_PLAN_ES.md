@@ -706,6 +706,33 @@ No hay problema de thread boundary porque qasync ejecuta el event loop de asynci
 1. **Baja prioridad: dar por cerrada formalmente la consolidación UI de Precog**
    - Todos los consumidores UI relevantes ya están migrados al método justo para su necesidad.
 
+## Cierre formal de la consolidación UI de Precog
+
+La consolidación de todos los consumidores UI sobre Precog está **formalmente cerrada** en esta fase. No quedan migraciones pendientes de lectores ni consumidores relevantes por mover.
+
+### API pública recomendada
+
+| Método | Para qué usarlo | Consumidores actuales |
+|--------|----------------|----------------------|
+| `Precog.snapshot(recording, now=None)` | Consumidores que necesitan el estado predictivo completo + decisión operativa + datos de UI en una sola foto coherente. **Punto de entrada preferido** para nuevos consumidores. | `record_manager.py`, `recording_card.py`, `recordings_view.py`, `live_forecast_dialog.py` |
+| `Precog.forecast(recording, now=None)` | Consumidores livianos que solo necesitan forecast_details (ventana, confianza, score) sin adjusted_interval ni decisión de cola. | `recording_info_dialog.py` |
+| `Precog.stable_queue_key(recording)` | Badge de cola en UI. Devuelve un key estable basado en el intervalo base configurado, sin jitter operacional. **No usar para decisiones de scheduling**. | `recordings_view.py` (badge cache) |
+| `Precog.predict()` / `Precog.decide_queue()` | Compatibilidad y contratos derivados. **No** son el punto de entrada preferido para nuevos consumidores UI. | Tests, wrappers internos |
+
+### Consumidores actuales — mapa completo
+
+| Consumidor | Método Precog | Notas |
+|---|---|---|
+| `record_manager.py` | `snapshot()` | Punto de entrada operativo principal |
+| `recording_card.py` | `snapshot()` / `_last_snapshot` | Lee snapshot cacheado del ciclo operativo |
+| `recordings_view.py` | `snapshot()` + `stable_queue_key()` | Snapshot para datos, stable_queue_key para badge |
+| `live_forecast_dialog.py` | `snapshot()` | Diálogo pesado de predicciones |
+| `recording_info_dialog.py` | `forecast()` | Diálogo liviano bajo demanda |
+
+### ¿Qué sigue?
+
+No hay más consumidores UI relevantes que migrar. El próximo trabajo de valor está en la **simplificación y documentación de la API de Precog**, no en seguir moviendo lectores.
+
 ## Punto de reentrada para futuras sesiones
 
 La notificación Precog → UI ya está implementada (Paso 10), la deuda de consistencia temporal ya quedó cerrada, `live_forecast_dialog.py` ya fue consolidado sobre `Precog.snapshot()` y `recording_info_dialog.py` ya usa `Precog.forecast()` como camino liviano. La consolidación UI de Precog puede darse por cerrada. El siguiente paso recomendado es:

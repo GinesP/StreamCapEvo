@@ -403,7 +403,7 @@ class LiveForecastDialog(QDialog):
         # Gather forecasts with proximity info
         forecasts = []
         for rec in self.recordings:
-            snap = Precog.snapshot(rec)
+            snap = Precog.snapshot(rec, include_horizons=True)
             score = snap.likelihood
             info = snap.time_state
             state = info.get("state")

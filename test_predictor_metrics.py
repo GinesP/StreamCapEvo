@@ -19,6 +19,7 @@ class PredictorMetricsStoreTests(unittest.TestCase):
             store.record_event("check_dispatched", {"rec_id": "r-1", "loop_time_seconds": 60})
             store.record_event("check_result", {"rec_id": "r-1", "is_live": False})
 
+            store.close()
             conn = sqlite3.connect(store.db_path)
             rows = conn.execute("SELECT event, rec_id FROM predictor_metrics ORDER BY id ASC").fetchall()
             conn.close()
@@ -152,6 +153,7 @@ class PredictorMetricsStoreTests(unittest.TestCase):
             store.record_event("check_result", {"rec_id": "rec-1", "is_live": False})
             summary = store.summarize(lookback_hours=72)
 
+            store.close()
             conn = sqlite3.connect(store.db_path)
             row_count = conn.execute("SELECT COUNT(*) FROM predictor_metrics").fetchone()[0]
             conn.close()
@@ -282,6 +284,7 @@ class PredictorMetricsStoreTests(unittest.TestCase):
 
             # Trigger purge via record_event
             store.record_event("check_dispatched", {"rec_id": "trigger", "loop_time_seconds": 60})
+            store.close()
 
             with store._connect() as conn:
                 rows = conn.execute("SELECT rec_id FROM predictor_metrics ORDER BY timestamp ASC").fetchall()
@@ -317,6 +320,7 @@ class PredictorMetricsStoreTests(unittest.TestCase):
 
             # Second write should purge again because throttle elapsed
             store.record_event("check_dispatched", {"rec_id": "t2", "loop_time_seconds": 60})
+            store.close()
 
             with store._connect() as conn:
                 row_count = conn.execute("SELECT COUNT(*) FROM predictor_metrics").fetchone()[0]
@@ -346,12 +350,64 @@ class PredictorMetricsStoreTests(unittest.TestCase):
 
             # Second write with throttle still active should NOT purge again
             store.record_event("check_dispatched", {"rec_id": "t2", "loop_time_seconds": 60})
+            store.close()
 
             with store._connect() as conn:
                 row_count = conn.execute("SELECT COUNT(*) FROM predictor_metrics").fetchone()[0]
 
             # old-rec purged once, t1 and t2 remain
             self.assertEqual(row_count, 2)
+
+    def test_writes_still_work_after_close(self):
+        """close() discards the persistent connection; next write re-creates it."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(Path(temp_dir) / "predictor_metrics.db")
+            store.record_event("check_dispatched", {"rec_id": "r-1"})
+            store.close()
+            # Next write should create a fresh connection without error
+            store.record_event("check_dispatched", {"rec_id": "r-2"})
+            store.close()
+            conn = sqlite3.connect(store.db_path)
+            rows = conn.execute("SELECT rec_id FROM predictor_metrics ORDER BY id ASC").fetchall()
+            conn.close()
+            self.assertEqual([r[0] for r in rows], ["r-1", "r-2"])
+
+    def test_close_is_idempotent(self):
+        """Calling close() multiple times is safe."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(Path(temp_dir) / "predictor_metrics.db")
+            store.close()
+            store.close()  # second call should not raise
+            store.record_event("check_dispatched", {"rec_id": "r-1"})
+            store.close()
+
+    def test_interrupt_then_write_creates_fresh_connection(self):
+        """After interrupt_pending_operations, the persistent connection is
+        discarded and a new write succeeds on the next record_event."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(Path(temp_dir) / "predictor_metrics.db")
+            store.record_event("check_dispatched", {"rec_id": "r-1"})
+            store.interrupt_pending_operations()
+            # The write connection was discarded; next call creates a fresh one
+            store.record_event("check_dispatched", {"rec_id": "r-2"})
+            store.close()
+            conn = sqlite3.connect(store.db_path)
+            rows = conn.execute("SELECT rec_id FROM predictor_metrics ORDER BY id ASC").fetchall()
+            conn.close()
+            self.assertEqual([r[0] for r in rows], ["r-1", "r-2"])
+
+    def test_reuses_write_connection_within_record_event(self):
+        """Multiple record_event calls reuse the same connection (internal check)."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PredictorMetricsStore(Path(temp_dir) / "predictor_metrics.db")
+            # First call creates the connection
+            store.record_event("check_dispatched", {"rec_id": "r-1"})
+            conn1 = store._write_conn
+            self.assertIsNotNone(conn1)
+            # Second call reuses it
+            store.record_event("check_dispatched", {"rec_id": "r-2"})
+            self.assertIs(store._write_conn, conn1)
+            store.close()
 
     def test_summarize_still_works_after_purge(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -373,6 +429,7 @@ class PredictorMetricsStoreTests(unittest.TestCase):
             )
 
             store.record_event("check_dispatched", {"rec_id": "trigger", "loop_time_seconds": 60})
+            store.close()
 
             summary = store.summarize(lookback_hours=72)
             self.assertEqual(summary.total_checks, 1)
@@ -386,6 +443,7 @@ class PredictorMetricsReportTests(unittest.TestCase):
             metrics_store = PredictorMetricsStore(Path(temp_dir) / "config" / "predictor_metrics.db")
             metrics_store.record_event("check_dispatched", {"rec_id": "r-1", "loop_time_seconds": 60})
             metrics_store.record_event("check_result", {"rec_id": "r-1", "is_live": False})
+            metrics_store.close()
 
             output = io.StringIO()
             with redirect_stdout(output):

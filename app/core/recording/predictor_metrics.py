@@ -1,10 +1,13 @@
 import json
 import sqlite3
 import threading
+import time as _time
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from ...utils.logger import logger
 
 
 def _utcnow() -> datetime:
@@ -116,6 +119,7 @@ class PredictorMetricsStore:
         self._lock = threading.Lock()
         self._active_connections_lock = threading.Lock()
         self._active_connections: set[sqlite3.Connection] = set()
+        self._write_conn: sqlite3.Connection | None = None
         self._interrupt_event = threading.Event()
         self.db_path = self._resolve_db_path(self.file_path)
         self.legacy_jsonl_path = (
@@ -151,6 +155,37 @@ class PredictorMetricsStore:
                 with self._active_connections_lock:
                     self._active_connections.discard(conn)
 
+    def _get_write_conn(self) -> sqlite3.Connection:
+        """Return the persistent write connection, creating it lazily."""
+        if self._write_conn is None:
+            conn = sqlite3.connect(self.db_path)
+            self._configure_db(conn)
+            self._write_conn = conn
+            with self._active_connections_lock:
+                self._active_connections.add(conn)
+        return self._write_conn
+
+    def _close_write_conn(self) -> None:
+        """Close and discard the persistent write connection."""
+        conn = self._write_conn
+        if conn is not None:
+            self._write_conn = None
+            with self._active_connections_lock:
+                self._active_connections.discard(conn)
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+
+    def close(self) -> None:
+        """Explicitly close the persistent write connection.
+
+        Avoid finalizer-based cleanup here: taking locks from ``__del__`` can
+        deadlock or fail during interpreter shutdown.
+        """
+        with self._lock:
+            self._close_write_conn()
+
     def interrupt_pending_operations(self) -> None:
         self._interrupt_event.set()
         with self._active_connections_lock:
@@ -160,6 +195,9 @@ class PredictorMetricsStore:
                 conn.interrupt()
             except sqlite3.Error:
                 continue
+        # Connection is in undefined state after interrupt; discard it.
+        # Next record_event() will create a fresh one.
+        self._close_write_conn()
 
     def _raise_if_interrupted(self) -> None:
         if self._interrupt_event.is_set():
@@ -287,7 +325,8 @@ class PredictorMetricsStore:
     def record_event(self, event_type: str, payload: dict) -> None:
         timestamp = _utcnow().isoformat()
         with self._lock:
-            with self._connect() as conn:
+            conn = self._get_write_conn()
+            try:
                 self._maybe_purge(conn)
                 conn.execute(
                     "INSERT INTO predictor_metrics (timestamp, event, rec_id, is_live, priority, likelihood, payload_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -302,11 +341,21 @@ class PredictorMetricsStore:
                     ),
                 )
                 conn.commit()
+            except sqlite3.OperationalError:
+                self._close_write_conn()
+                raise
 
     def summarize(self, lookback_hours: int = 72, near_live_minutes: int = 15) -> MetricsSummary:
+        _t0 = _time.perf_counter()
         self._interrupt_event.clear()
         horizon_start = _utcnow() - timedelta(hours=max(1, int(lookback_hours)))
         records = self._load_records_after(horizon_start)
+        _load_elapsed = _time.perf_counter() - _t0
+        if records:
+            logger.info(
+                "[DIAG] PredictorMetricsStore.summarize loaded {} records in {:.3f}s",
+                len(records), _load_elapsed,
+            )
         results = [item for item in records if item.get("event") == "check_result"]
         dispatched = [item for item in records if item.get("event") == "check_dispatched"]
 
@@ -488,8 +537,11 @@ class PredictorMetricsStore:
 
         self._raise_if_interrupted()
         records = []
+        # Track raw payload size as a memory-use proxy
+        _payload_bytes = 0
         for timestamp, event, payload_json in rows:
             self._raise_if_interrupted()
+            _payload_bytes += len(payload_json)
             try:
                 payload = json.loads(payload_json)
             except json.JSONDecodeError:
@@ -500,6 +552,12 @@ class PredictorMetricsStore:
                     "event": event,
                     "payload": payload,
                 }
+            )
+        if _payload_bytes:
+            logger.info(
+                "[DIAG] PredictorMetricsStore._load_records_after: {} rows, {} est. payload bytes",
+                len(rows),
+                _payload_bytes,
             )
         return records
 

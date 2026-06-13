@@ -74,6 +74,9 @@ class MainWindow(QMainWindow):
         # Subscribe to external theme changes (hot-reload via theme.json)
         theme_manager.themeChanged.connect(self._on_theme_manager_changed)
 
+        # Start periodic runtime diagnostics (suspect memory growth)
+        self._setup_diagnostics()
+
     # ── Shortcuts ────────────────────────────────────────────────────
 
     def _setup_shortcuts(self):
@@ -325,6 +328,55 @@ class MainWindow(QMainWindow):
         self._dark_mode = theme_manager.is_dark
         self._update_theme_btn()
 
+    # ── Runtime Diagnostics ───────────────────────────────────────────
+
+    def _setup_diagnostics(self):
+        """Start periodic diagnostics logging if enabled.
+
+        Controlled by the ``STREAMCAP_DIAGNOSTICS_INTERVAL`` environment
+        variable (in seconds).  Default: 300 (5 minutes).  Set to 0 to
+        disable.
+        """
+        import os
+
+        interval = int(os.environ.get("STREAMCAP_DIAGNOSTICS_INTERVAL", "300"))
+        if interval <= 0:
+            return
+
+        self._diag_timer = QTimer(self)
+        self._diag_timer.timeout.connect(self._log_diagnostics)
+        self._diag_timer.start(interval * 1000)
+
+        # Also log once after the window is fully up (6 s delay)
+        QTimer.singleShot(6000, self._log_diagnostics)
+
+    def _log_diagnostics(self):
+        """Collect and log a diagnostics snapshot."""
+        from app.utils.logger import logger as _log
+
+        try:
+            # Late import avoids circular dep at module level
+            from app.utils import diagnostics as _diag
+
+            report = _diag.collect_report(
+                event_bus=self.app.event_bus,
+                language_manager=self.app.language_manager,
+                predictor_store=(
+                    self.app.record_manager.predictor_metrics
+                    if hasattr(self.app, "record_manager")
+                    and self.app.record_manager is not None
+                    and hasattr(self.app.record_manager, "predictor_metrics")
+                    else None
+                ),
+            )
+            _log.info("=== DIAGNOSTICS ===")
+            for section, data in report.items():
+                if data is None:
+                    continue
+                _log.info(f"  {section}: {data}")
+        except Exception as exc:
+            _log.warning(f"Diagnostics error: {exc}")
+
     @property
     def is_dark_mode(self) -> bool:
         return self._dark_mode
@@ -390,6 +442,10 @@ class MainWindow(QMainWindow):
                 self.app.event_bus.publish("app_closing")
 
             if hasattr(self.app, "record_manager") and self.app.record_manager:
+                # Disable monitoring immediately — prevents check cycles from
+                # restarting recordings during shutdown
+                for rec in self.app.record_manager.recordings:
+                    rec.monitor_status = False
                 self.app.record_manager.predictor_metrics.interrupt_pending_operations()
 
             # Stop all active recordings

@@ -51,7 +51,6 @@ class LiveStreamRecorder:
         self.min_valid_recording_duration = 25
         self.recording_start_time = 0
         os.makedirs(self.output_dir, exist_ok=True)
-        self.app.language_manager.add_observer(self)
         self._ = {}
         self.load()
 
@@ -222,6 +221,12 @@ class LiveStreamRecorder:
         Construct ffmpeg recording parameters and start recording
         """
 
+        # Register as a language-change observer only when recording actually begins.
+        # Registration in __init__ was removed because LiveStreamRecorder is created
+        # on every live-status check (even for offline streams), which caused an
+        # unbounded observer leak. Observer lifecycle now mirrors recording lifecycle.
+        self.app.language_manager.add_observer(self)
+
         self.save_format, use_direct_download = self._get_record_format(stream_info)
         filename = self._get_filename(stream_info)
         self.output_dir = self._get_output_dir(stream_info)
@@ -298,6 +303,9 @@ class LiveStreamRecorder:
                 del self.app.record_manager.active_recorders[self.recording.rec_id]
                 self.recording.stopping_in_progress = False
                 logger.info(tr("console.removed_active_recorder", "Removed recorder from active_recorders: {}").format(self.recording.rec_id))
+            # Unregister from LanguageManager to prevent observer leak.
+            # Safe to call multiple times — remove_observer is a no-op if not registered.
+            self.app.language_manager.remove_observer(self)
         except Exception as e:
             logger.error(f"Failed to remove recorder instance: {e}")
 
