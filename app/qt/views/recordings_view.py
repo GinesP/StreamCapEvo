@@ -328,7 +328,7 @@ class RecordingListDelegate(QStyledItemDelegate):
         """
         qk = Precog.stable_queue_key(rec)
         qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
-        return qk, qc, 0.0, False
+        return qk, qc, 0.0, RecordingStateLogic.is_stale(rec)
 
 
 class QtRecordingsView(QWidget):

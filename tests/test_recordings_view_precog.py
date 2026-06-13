@@ -40,13 +40,27 @@ class SnapshotDataStableBadgeTests(unittest.TestCase):
         self.assertEqual(likelihood, 0.0)
         self.assertEqual(qk, "S")
 
-    def test_stale_always_false_in_fallback(self):
-        """Fallback stale is always False."""
+    @patch("app.core.recording.recording_state_logic.RecordingStateLogic.is_stale")
+    def test_stale_derived_from_state_logic_in_fallback(self, mock_is_stale):
+        """Fallback stale derives from RecordingStateLogic.is_stale(rec)."""
+        mock_is_stale.return_value = True
         rec = MagicMock()
         rec.loop_time_seconds = 180  # ≤180 → "M"
         qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
-        self.assertFalse(stale)
+        self.assertTrue(stale)
+        mock_is_stale.assert_called_once_with(rec)
         self.assertEqual(qk, "M")
+
+    @patch("app.core.recording.recording_state_logic.RecordingStateLogic.is_stale")
+    def test_stale_derived_from_state_logic_false(self, mock_is_stale):
+        """Fallback stale is False when RecordingStateLogic.is_stale returns False."""
+        mock_is_stale.return_value = False
+        rec = MagicMock()
+        rec.loop_time_seconds = 300
+        qk, qc, likelihood, stale = RecordingListDelegate._snapshot_data(rec)
+        self.assertFalse(stale)
+        mock_is_stale.assert_called_once_with(rec)
+        self.assertEqual(qk, "S")
 
     @patch("app.core.recording.precog.Precog.snapshot")
     def test_badge_data_reads_from_model_cache(self, mock_snapshot):

@@ -170,5 +170,80 @@ class FillBadgesLastSnapshotTests(unittest.TestCase):
         mock_snapshot.assert_not_called()
 
 
+class FillBadgesFallbackStaleTests(unittest.TestCase):
+    """_fill_badges fallback derives is_stale from RecordingStateLogic.is_stale(rec)."""
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    @patch("app.core.recording.recording_state_logic.RecordingStateLogic.is_stale")
+    def test_fallback_stale_shows_30d_badge_when_stale(self, mock_is_stale, mock_snapshot, mock_badge_cls):
+        """When _last_snapshot is None and rec is stale, fallback shows 30D badge."""
+        mock_is_stale.return_value = True
+
+        rec = MagicMock()
+        rec._last_snapshot = None
+        rec.loop_time_seconds = 180
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        calls = [call.args for call in mock_badge_cls.call_args_list]
+        badge_texts = [args[0] for args in calls if args]
+        self.assertIn("30D", badge_texts)
+        mock_is_stale.assert_called_once_with(rec)
+        mock_snapshot.assert_not_called()
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    @patch("app.core.recording.recording_state_logic.RecordingStateLogic.is_stale")
+    def test_fallback_no_30d_badge_when_not_stale(self, mock_is_stale, mock_snapshot, mock_badge_cls):
+        """When _last_snapshot is None and rec is not stale, 30D badge is absent."""
+        mock_is_stale.return_value = False
+
+        rec = MagicMock()
+        rec._last_snapshot = None
+        rec.loop_time_seconds = 60
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        calls = [call.args for call in mock_badge_cls.call_args_list]
+        badge_texts = [args[0] for args in calls if args]
+        self.assertNotIn("30D", badge_texts)
+        mock_is_stale.assert_called_once_with(rec)
+        mock_snapshot.assert_not_called()
+
+    @patch("app.qt.components.recording_card._Badge")
+    @patch("app.qt.components.recording_card.Precog.snapshot")
+    def test_stale_from_snapshot_still_works(self, mock_snapshot, mock_badge_cls):
+        """When _last_snapshot is present, is_stale from snapshot is used (not state logic)."""
+        rec = MagicMock()
+        rec.loop_time_seconds = 60
+        rec._last_snapshot = MagicMock(likelihood=0.0, is_stale=True, queue_key="F")
+
+        layout = MagicMock()
+        layout.count.return_value = 0
+
+        card = MagicMock()
+        card._badge_state_test = None
+
+        QtRecordingCard._fill_badges(rec, layout, card, "test")
+
+        calls = [call.args for call in mock_badge_cls.call_args_list]
+        badge_texts = [args[0] for args in calls if args]
+        self.assertIn("30D", badge_texts)
+        mock_snapshot.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

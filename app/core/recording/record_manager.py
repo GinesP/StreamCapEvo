@@ -838,7 +838,6 @@ class RecordingManager:
 
         finally:
             recording.is_checking = False
-            recording._last_snapshot = None
             self.app.event_bus.publish("update", recording)
         return
 

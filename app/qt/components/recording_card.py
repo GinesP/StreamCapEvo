@@ -494,7 +494,7 @@ class QtRecordingCard(QFrame):
             q_t = Precog.stable_queue_key(rec)
             q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
             score = 0.0
-            is_stale = False
+            is_stale = RecordingStateLogic.is_stale(rec)
 
         cache_attr = f"_badge_state_{prefix}"
         current_state = (q_t, q_c, score, is_stale)

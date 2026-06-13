@@ -296,12 +296,13 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
         asyncio.run(_run())
 
     @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    def test_check_if_live_finally_invalidates_last_snapshot(
+    def test_check_if_live_finally_preserves_last_snapshot(
         self, mock_metrics
     ):
-        """check_if_live finally block invalidates _last_snapshot on early return.
-        Persist is intentionally NOT called here — it is handled by
-        check_all_live_status end-of-cycle (line 572) to reduce churn."""
+        """check_if_live finally block preserves _last_snapshot so the UI
+        can still display likelihood and is_stale badges from the predictor
+        cycle. The snapshot remains until the next intelligence cycle
+        overwrites it."""
         async def _run():
             app = MagicMock()
             app.settings.user_config.get = _settings_get
@@ -328,15 +329,21 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             except (asyncio.CancelledError, RuntimeError):
                 pass
 
+            snapshot = MagicMock()
+            snapshot.likelihood = 0.85
+            snapshot.is_stale = False
+
             recording = _make_recording(monitor_status=True)
             recording.is_recording = True
             recording.is_checking = True
-            recording._last_snapshot = MagicMock()
+            recording._last_snapshot = snapshot
             GlobalRecordingState.recordings = [recording]
 
             await manager.check_if_live(recording)
 
-            self.assertIsNone(recording._last_snapshot)
+            # Snapshot preserved so UI can display likelihood/stale badges
+            self.assertIsNotNone(recording._last_snapshot)
+            self.assertIs(recording._last_snapshot, snapshot)
             self.assertFalse(recording.is_checking)
 
         asyncio.run(_run())
