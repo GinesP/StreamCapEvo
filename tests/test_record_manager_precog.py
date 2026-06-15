@@ -194,10 +194,12 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
 
     @patch("app.core.recording.record_manager.PredictorMetricsStore")
     @patch("app.core.recording.precog.Precog.snapshot")
-    def test_sets_last_snapshot_and_publishes_event(
+    def test_does_not_retain_full_snapshot_on_recording(
         self, mock_snapshot, mock_metrics
     ):
-        """check_all_live_status sets recording._last_snapshot and publishes precog_snapshot_batch."""
+        """check_all_live_status does NOT store PrecogSnapshot on recording (memory regression fix).
+        Only lightweight fallback fields are persisted. The full snapshot is still
+        published via precog_snapshot_batch for dashboard consumers."""
         mock_snap = MagicMock(spec=PrecogSnapshot)
         mock_snap.adjusted_interval = 60
         mock_snap.likelihood = 0.95
@@ -236,10 +238,13 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
 
             await manager.check_all_live_status()
 
-            self.assertIs(recording._last_snapshot, mock_snap)
-            # Per-recording fallback values stored alongside snapshot
+            # Full snapshot NOT retained on recording object
+            self.assertFalse(hasattr(recording, "_last_snapshot"),
+                             "PrecogSnapshot must not be stored on recording")
+            # Lightweight fallback fields ARE persisted
             self.assertEqual(recording._last_queue_key, "F")
             self.assertEqual(recording._last_likelihood, 0.95)
+            # Full snapshot still published via event for dashboard consumers
             app.event_bus.publish.assert_any_call(
                 "precog_snapshot_batch", {"rec-test": mock_snap}
             )

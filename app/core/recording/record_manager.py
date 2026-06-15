@@ -443,7 +443,10 @@ class RecordingManager:
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
             recording.loop_time_seconds = base_interval
             snap = Precog.snapshot(recording, now=None, include_debug=True)  # TEMP-DIAG
-            recording._last_snapshot = snap
+            # Only persist lightweight fallback fields — NOT the full PrecogSnapshot.
+            # The full snapshot is used immediately for operational decisions but
+            # MUST NOT be retained on recording to avoid memory pressure from
+            # forecast_details (with _score_debug) and time_state.
             recording._last_queue_key = snap.queue_key
             recording._last_likelihood = snap.likelihood
             _precog_snapshots[recording.rec_id] = snap

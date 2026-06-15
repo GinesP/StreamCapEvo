@@ -28,22 +28,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.recording.precog import Precog
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.qt.components.recording_card import QtRecordingCard
-from app.qt.themes.theme import QUEUE_COLORS, theme_manager
+from app.qt.themes.theme import theme_manager
 from app.qt.utils.elevation import apply_elevation
 from app.qt.utils.filters import RecordingFilters
 from app.qt.utils.iconography import apply_button_icon, icon_pixmap
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
 from app.utils.logger import logger
-
-_QUEUE_KEY_COLORS = {
-    "F": QUEUE_COLORS["fast"],
-    "M": QUEUE_COLORS["medium"],
-    "S": QUEUE_COLORS["slow"],
-}
 
 _RECORDING_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -54,7 +47,6 @@ class RecordingListModel(QAbstractListModel):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._recordings: list = []
-        self._badge_cache: dict[str, tuple] = {}
 
     def rowCount(self, parent: QModelIndex | None = None) -> int:  # noqa: N802
         parent = parent or QModelIndex()
@@ -73,7 +65,6 @@ class RecordingListModel(QAbstractListModel):
     def set_recordings(self, recordings: list) -> None:
         self.beginResetModel()
         self._recordings = list(recordings)
-        self._badge_cache.clear()
         self.endResetModel()
 
     def recordings(self) -> list:
@@ -179,30 +170,8 @@ class RecordingListDelegate(QStyledItemDelegate):
         if RecordingStateLogic.should_show_live_title(rec):
             name = f"{name} — {rec.live_title}"
 
-        badges: list[tuple[str, str, int]] = []
-        qk, qc, likelihood, stale = self._badge_data(rec, index)
-        badges.append((qk, qc, 36))
-
-        if likelihood > 0:
-            label = (
-                self._card_l.get("likelihood_high", "High")
-                if likelihood >= 0.8
-                else self._card_l.get("likelihood_normal", "Normal")
-            )
-            color = "#4CAF50" if likelihood >= 0.8 else "#42A5F5"
-            painter.setFont(body_font(8, QFont.Weight.Bold))
-            badge_w = max(36, painter.fontMetrics().horizontalAdvance(label) + 16)
-            badges.append((label, color, badge_w))
-
-        if stale:
-            badges.append((tr("recording_card.stale_badge", default="30D"), "#EF6C00", 46))
-
-        gap = 6
-        badges_total = sum(w for _, _, w in badges) + max(0, len(badges) - 1) * gap
-        badge_x = max(text_x + 8, action_left - 14 - badges_total)
-
-        # Keep text strictly before badges/actions to avoid overlap in narrow widths
-        name_right = max(text_x + 40, min(action_left - 20, badge_x - 8))
+        # Keep text strictly before action buttons to avoid overlap in narrow widths
+        name_right = max(text_x + 40, action_left - 20)
 
         painter.setFont(body_font(10, QFont.Weight.Bold))
         painter.setPen(QColor(colors["text"]))
@@ -236,11 +205,6 @@ class RecordingListDelegate(QStyledItemDelegate):
                 Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                 painter.fontMetrics().elidedText(duration_text, Qt.TextElideMode.ElideRight, duration_rect.width()),
             )
-
-        x_cursor = badge_x
-        for text, color, width in badges:
-            self._draw_badge(painter, QRect(x_cursor, row.y() + 26, width, 22), text, color)
-            x_cursor += width + gap
 
         for action, icon_name, rect in action_rects:
             is_action_hovered = self.hovered_action == (getattr(rec, "rec_id", ""), action)
@@ -293,45 +257,7 @@ class RecordingListDelegate(QStyledItemDelegate):
                 return action
         return None
 
-    @staticmethod
-    def _draw_badge(painter: QPainter, rect: QRect, text: str, color: str) -> None:
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QBrush(QColor(color)))
-        painter.drawRoundedRect(rect, 5, 5)
-        painter.setPen(QColor("#FFFFFF"))
-        painter.setFont(body_font(8, QFont.Weight.Bold))
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
 
-    def _badge_data(self, rec, index: QModelIndex) -> tuple[str, str, float, bool]:
-        """Read badge data from model cache if available; fallback to computed snapshot."""
-        model = index.model()
-        if hasattr(model, "_badge_cache"):
-            rid = getattr(rec, "rec_id", None) or id(rec)
-            cached = model._badge_cache.get(rid)
-            if cached is not None:
-                return cached
-        return self._snapshot_data(rec)
-
-    @staticmethod
-    def _snapshot_data(rec) -> tuple[str, str, float, bool]:
-        """Return (queue_key, queue_color, likelihood, is_stale).
-
-        Uses Precog.stable_queue_key (base interval, no jitter) so the
-        badge never flickers. Likelihood falls back to recording.priority_score
-        (already available, no Precog.snapshot call) so the likelihood badge
-        remains visible even before the first operational cycle populates
-        _badge_cache.
-
-        This must NOT call Precog.snapshot() — that would create a
-        competing badge source that flickers against the operational
-        cycle data.
-        """
-        _qk = getattr(rec, "_last_queue_key", None)
-        qk = _qk if _qk is not None else Precog.stable_queue_key(rec)
-        qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
-        _lh = getattr(rec, "_last_likelihood", None)
-        likelihood = _lh if _lh is not None else getattr(rec, "priority_score", 0.0)
-        return qk, qc, likelihood, RecordingStateLogic.is_stale(rec)
 
 
 class QtRecordingsView(QWidget):
@@ -835,7 +761,6 @@ class QtRecordingsView(QWidget):
         self.app.event_bus.subscribe("update", self._on_recording_updated)
         self.app.event_bus.subscribe("add", self._on_recording_added)
         self.app.event_bus.subscribe("delete", self._on_recording_deleted)
-        self.app.event_bus.subscribe("precog_snapshot_batch", self._on_precog_snapshot_batch)
 
     def _on_recording_updated(self, topic, recording):
         """Handle 'update' event from EventBus."""
@@ -859,20 +784,6 @@ class QtRecordingsView(QWidget):
         self._update_badge_cache()
         if self._view_mode == "list":
             self.list_model.refresh_all()
-
-    def _on_precog_snapshot_batch(self, topic, snapshots: dict) -> None:
-        """Cache badge data from operational cycle — no Precog recomputation in UI."""
-        cache = self.list_model._badge_cache
-        for rec in self.list_model.recordings():
-            rid = getattr(rec, "rec_id", None) or id(rec)
-            snap = snapshots.get(rid)
-            if snap is not None:
-                qk = snap.queue_key
-                qc = _QUEUE_KEY_COLORS.get(qk, "#9E9E9E")
-                cache[rid] = (qk, qc, snap.likelihood, snap.is_stale)
-
-        if self._view_mode == "list":
-            self.list_view.viewport().update()
 
     def _update_badge_cache(self) -> None:
         """Refresh visible cards; badge cache is populated by operational cycle events."""

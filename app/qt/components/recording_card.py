@@ -41,10 +41,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from app.core.recording.precog import Precog
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.models.recording.recording_status_model import CardStateType
-from app.qt.themes.theme import QUEUE_COLORS, theme_manager
+from app.qt.themes.theme import theme_manager
 from app.qt.utils.iconography import apply_button_icon
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
@@ -61,13 +60,6 @@ _STATUS_COLOR: dict[CardStateType, str] = {
     CardStateType.STOPPED:   "#607D8B",
     CardStateType.CHECKING:  "#2196F3",
 }
-
-_QUEUE_BADGE_COLORS: dict[str, str] = {
-    "F": QUEUE_COLORS["fast"],
-    "M": QUEUE_COLORS["medium"],
-    "S": QUEUE_COLORS["slow"],
-}
-
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -94,28 +86,6 @@ class _Avatar(QLabel):
         self._bg = bg
         self._refresh_style()
         self.setText(char.upper())
-
-
-class _Badge(QFrame):
-    """Small coloured pill badge: text on a solid colour."""
-
-    def __init__(
-        self, text: str, color: str, tip: str = "",
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setToolTip(tip)
-        self.setFixedHeight(20)
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(7, 0, 7, 0)
-        lbl = QLabel(text)
-        lbl.setStyleSheet(
-            "color:#fff; font-size:10px; font-weight:700; background:transparent;"
-        )
-        lay.addWidget(lbl)
-        self.setStyleSheet(
-            f"background:{color}; border-radius:5px; border:none;"
-        )
 
 
 def _mk_btn(icon_name: str, tip: str, parent: QWidget) -> QPushButton:
@@ -476,67 +446,6 @@ class QtRecordingCard(QFrame):
         if favorite_btn_l:
             apply_button_icon(favorite_btn_l, fav_icon, size=14, color=fav_color)
             favorite_btn_l.setToolTip(fav_tip)
-
-        # Badges
-        self._fill_badges(rec, self._g_badge_row, self, "grid")
-        self._fill_badges(rec, self._l_badge_row, self, "list")
-
-
-    @staticmethod
-    def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
-        snap = getattr(rec, "_last_snapshot", None)
-        if snap is not None:
-            q_t = snap.queue_key
-            q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
-            score = snap.likelihood
-            is_stale = snap.is_stale
-        else:
-            _qk = getattr(rec, "_last_queue_key", None)
-            q_t = _qk if _qk is not None else Precog.stable_queue_key(rec)
-            q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
-            _lh = getattr(rec, "_last_likelihood", None)
-            score = _lh if _lh is not None else getattr(rec, "priority_score", 0.0)
-            is_stale = RecordingStateLogic.is_stale(rec)
-
-        cache_attr = f"_badge_state_{prefix}"
-        current_state = (q_t, q_c, score, is_stale)
-        if getattr(card_instance, cache_attr, None) == current_state:
-            return
-        setattr(card_instance, cache_attr, current_state)
-
-        while layout.count():
-            item = layout.takeAt(0)
-            if w := item.widget():
-                w.setParent(None)  # safe deletion in layout context
-                w.deleteLater()
-
-        layout.addWidget(_Badge(q_t, q_c, tr("recording_card.queue_badge_tip", default="Queue speed")))
-
-        if score > 0:
-            l_t = (
-                tr("recording_card.likelihood_high", default="High")
-                if score >= 0.8
-                else tr("recording_card.likelihood_normal", default="Normal")
-            )
-            l_c = "#4CAF50" if score >= 0.8 else "#42A5F5"
-            badge_tip = tr(
-                "recording_card.likelihood_with_score",
-                default="Likelihood {score}",
-            ).format(score=f"{score:.0%}")
-            layout.addWidget(_Badge(l_t, l_c, badge_tip))
-
-        if is_stale:
-            layout.addWidget(
-                _Badge(
-                    tr("recording_card.stale_badge", default="30D"),
-                    "#EF6C00",
-                    tr(
-                        "recording_card.stale_badge_tip",
-                        default="Not seen live for over 30 days",
-                    ),
-                )
-            )
-
 
     # ─────────────────────────────────────────────────────────────────────────
     # Painting  (card background + shadow drawn here to avoid effect conflicts)
