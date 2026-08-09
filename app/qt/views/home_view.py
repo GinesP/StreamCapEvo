@@ -670,6 +670,11 @@ class QtHomeView(QWidget):
         self._stats_timer.timeout.connect(self._refresh_stats)
         self._stats_timer.start()
 
+        self._stats_refresh_debounce_timer = QTimer(self)
+        self._stats_refresh_debounce_timer.setSingleShot(True)
+        self._stats_refresh_debounce_timer.setInterval(100)
+        self._stats_refresh_debounce_timer.timeout.connect(self._refresh_stats)
+
         self.app.event_bus.subscribe("update", self._on_recording_event)
         self.app.event_bus.subscribe("add",    self._on_recording_event)
         self.app.event_bus.subscribe("delete", self._on_recording_event)
@@ -1002,7 +1007,8 @@ class QtHomeView(QWidget):
             logger.error(f"HomeView: Error refreshing stats: {e}")
 
     def _on_recording_event(self, topic, data) -> None:
-        QTimer.singleShot(100, self._refresh_stats)
+        if not self._stats_refresh_debounce_timer.isActive():
+            self._stats_refresh_debounce_timer.start()
 
     def _on_add_stream(self) -> None:
         from app.qt.components.add_stream_dialog import QtAddStreamDialog

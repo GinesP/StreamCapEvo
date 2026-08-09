@@ -43,7 +43,7 @@ from PySide6.QtWidgets import (
 
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.models.recording.recording_status_model import CardStateType
-from app.qt.themes.theme import theme_manager
+from app.qt.themes.theme import QUEUE_COLORS, theme_manager
 from app.qt.utils.iconography import apply_button_icon
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
@@ -60,6 +60,21 @@ _STATUS_COLOR: dict[CardStateType, str] = {
     CardStateType.STOPPED:   "#607D8B",
     CardStateType.CHECKING:  "#2196F3",
 }
+
+_QUEUE_BADGE_COLORS: dict[str, str] = {
+    "F": QUEUE_COLORS["fast"],
+    "M": QUEUE_COLORS["medium"],
+    "S": QUEUE_COLORS["slow"],
+}
+
+# Local queue-key conversion — avoids importing Precog in the UI layer.
+# Mirrors Precog.interval_to_queue_key logic exactly.
+def _interval_to_queue_key(interval_seconds: int) -> str:
+    if interval_seconds <= 60:
+        return "F"
+    if interval_seconds <= 180:
+        return "M"
+    return "S"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -86,6 +101,28 @@ class _Avatar(QLabel):
         self._bg = bg
         self._refresh_style()
         self.setText(char.upper())
+
+
+class _Badge(QFrame):
+    """Small coloured pill badge: text on a solid colour."""
+
+    def __init__(
+        self, text: str, color: str, tip: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setToolTip(tip)
+        self.setFixedHeight(20)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(7, 0, 7, 0)
+        lbl = QLabel(text)
+        lbl.setStyleSheet(
+            "color:#fff; font-size:10px; font-weight:700; background:transparent;"
+        )
+        lay.addWidget(lbl)
+        self.setStyleSheet(
+            f"background:{color}; border-radius:5px; border:none;"
+        )
 
 
 def _mk_btn(icon_name: str, tip: str, parent: QWidget) -> QPushButton:
@@ -331,6 +368,73 @@ class QtRecordingCard(QFrame):
         return w
 
     # ─────────────────────────────────────────────────────────────────────────
+    # Badges — lightweight, from already-computed predictor fields
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _fill_badges(rec, layout: QHBoxLayout, card_instance: "QtRecordingCard", prefix: str) -> None:
+        """
+        Populate *layout* with prediction badge widgets using ONLY lightweight
+        fields already persisted on *rec* by the predictor cycle.
+
+        No ``Precog.snapshot()`` call — this is a strict read-only consumer.
+        No ``_last_snapshot`` reference — those heavy snapshots are never stored.
+        """
+        # Lightweight fields set by record_manager.py dispatch cycle
+        q_t = getattr(rec, "_last_queue_key", None)
+        if q_t is None:
+            # Fallback: derive from the configured loop interval without Precog
+            base = getattr(rec, "loop_time_seconds", None)
+            q_t = _interval_to_queue_key(base) if base is not None else "M"
+        q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
+
+        score = getattr(rec, "_last_likelihood", None)
+        if score is None:
+            score = getattr(rec, "priority_score", 0.0)
+
+        is_stale = RecordingStateLogic.is_stale(rec)
+
+        # Cache: skip widget rebuild if badge state hasn't changed
+        cache_attr = f"_badge_state_{prefix}"
+        current_state = (q_t, q_c, score, is_stale)
+        if getattr(card_instance, cache_attr, None) == current_state:
+            return
+        setattr(card_instance, cache_attr, current_state)
+
+        # Clear old widgets
+        while layout.count():
+            item = layout.takeAt(0)
+            if w := item.widget():
+                w.setParent(None)
+                w.deleteLater()
+
+        # Queue badge (F / M / S)
+        layout.addWidget(_Badge(
+            q_t, q_c,
+            tr("recording_card.queue_badge_tip", default="Queue speed"),
+        ))
+
+        # Likelihood badge — only when score > 0 to avoid showing "0%"
+        if score > 0:
+            l_t = f"{score:.0%}" if score <= 1 else f"{score:.0%}" if score <= 100 else str(int(score))
+            if score <= 1:
+                pct = f"{score * 100:.0f}%"
+            else:
+                pct = f"{score:.0f}%"
+            l_c = "#4CAF50" if score >= 0.5 else "#FF9800" if score >= 0.15 else "#F44336"
+            layout.addWidget(_Badge(
+                pct, l_c,
+                tr("recording_card.likelihood_badge_tip", default="Predicted likelihood"),
+            ))
+
+        # Staleness badge (30D) — lightweight, uses RecordingStateLogic only
+        if is_stale:
+            layout.addWidget(_Badge(
+                "30D", "#EF6C00",
+                tr("recording_card.stale_badge_tip", default="Not seen live in 30+ days"),
+            ))
+
+    # ─────────────────────────────────────────────────────────────────────────
     # Mode
     # ─────────────────────────────────────────────────────────────────────────
 
@@ -446,6 +550,10 @@ class QtRecordingCard(QFrame):
         if favorite_btn_l:
             apply_button_icon(favorite_btn_l, fav_icon, size=14, color=fav_color)
             favorite_btn_l.setToolTip(fav_tip)
+
+        # Badges — lightweight, from already-computed predictor fields
+        self._fill_badges(rec, self._g_badge_row, self, "grid")
+        self._fill_badges(rec, self._l_badge_row, self, "list")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Painting  (card background + shadow drawn here to avoid effect conflicts)
