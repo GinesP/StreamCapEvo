@@ -361,6 +361,11 @@ class MainWindow(QMainWindow):
             report = _diag.collect_report(
                 event_bus=self.app.event_bus,
                 language_manager=self.app.language_manager,
+                record_manager=(
+                    self.app.record_manager
+                    if hasattr(self.app, "record_manager") and self.app.record_manager is not None
+                    else None
+                ),
                 predictor_store=(
                     self.app.record_manager.predictor_metrics
                     if hasattr(self.app, "record_manager")

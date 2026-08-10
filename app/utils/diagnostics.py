@@ -12,8 +12,10 @@ in seconds), a combined report is logged at INFO level under the
 Example log lines::
 
     2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN - === DIAGNOSTICS ===
+    2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN -   process_memory: {'available': True, 'rss_bytes': 164626432, 'rss_mb': 157.0}
     2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN -   language_manager: {'observer_count': 3}
     2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN -   event_bus: {'topics': {'language_changed': 5, 'app_closing': 1}, 'total_subscribers': 6, 'topic_count': 2}
+    2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN -   record_manager: {'recording_count': 42, 'active_recorders': 1, 'predictor_dispatched_recordings': 3, 'predictor_dispatched_stale': 0, 'predictor_last_offline_sticky_recordings': 40, 'predictor_last_offline_stale': 0, 'checking': 3, 'status_checking': 3}
     2026-06-13 12:00:00.000 | INFO     | app.qt.main_window:_log_diagnostics:NNN -   predictor_store: {'db_path': '...', 'db_exists': True}
 
 Additionally, when the Stats view loads predictor data:
@@ -30,6 +32,23 @@ Additionally, when the Stats view loads predictor data:
 - ``event_bus.topics`` and ``event_bus.total_subscribers``: should be
   bounded and stable. Pages that are re-created (e.g. on language change)
   subscribe again without unsubscribing the old instance (suspect #2).
+
+- ``process_memory.rss_mb``: real resident memory of the Python process.
+  Normal oscillation is expected; what matters is when the baseline stops
+  returning and begins ratcheting upward cycle after cycle.
+
+- ``record_manager.active_recorders`` / ``predictor_dispatched_recordings`` /
+  ``checking``: these should roughly track active work. If RSS starts
+  climbing while one of these stops draining, that is a concrete trigger
+  candidate.
+
+- ``predictor_last_offline_sticky_recordings``: sticky per recording after an
+  offline result, so it is retention context rather than an active-work
+  signal.
+
+- ``*_stale`` counters: predictor map entries whose IDs are no longer in the
+  current recordings list. These are useful for spotting retention after
+  recordings are deleted.
 
 - ``asyncio.total_tasks``: should be bounded. A steady upward trend
   suggests orphaned coroutines (suspect #4 — check cycle accumulation).
@@ -49,6 +68,10 @@ import asyncio
 import gc
 from typing import TYPE_CHECKING
 
+import psutil
+
+from app.models.recording.recording_status_model import RecordingStatus
+
 # TEMP-DIAG: marker constant for temporary diagnostic instrumentation.
 # Search for TEMP_DIAG_TAG across the codebase to find all locations
 # that should be cleaned up after the predictive queue investigation.
@@ -57,6 +80,7 @@ TEMP_DIAG_TAG = "  # TEMP-DIAG"
 
 if TYPE_CHECKING:
     from app.core.config.language_manager import LanguageManager
+    from app.core.recording.record_manager import RecordingManager
     from app.core.recording.predictor_metrics import PredictorMetricsStore
     from app.event_bus import EventBus
 
@@ -64,6 +88,7 @@ if TYPE_CHECKING:
 def collect_report(
     event_bus: EventBus,
     language_manager: LanguageManager,
+    record_manager: RecordingManager | None = None,
     predictor_store: PredictorMetricsStore | None = None,
 ) -> dict:
     """Return a combined diagnostics snapshot.
@@ -72,8 +97,10 @@ def collect_report(
     so the user can spot growth in observer/subscriber counts over time.
     """
     return {
+        "process_memory": _process_memory_report(),
         "language_manager": _language_manager_report(language_manager),
         "event_bus": _event_bus_report(event_bus),
+        "record_manager": _record_manager_report(record_manager) if record_manager else None,
         "predictor_store": _predictor_store_report(predictor_store) if predictor_store else None,
         "asyncio": _asyncio_report(),
         "gc": _gc_report(),
@@ -92,6 +119,56 @@ def _predictor_store_report(store: PredictorMetricsStore) -> dict:
     return {
         "db_path": str(store.db_path),
         "db_exists": store.db_path.exists(),
+    }
+
+
+def _process_memory_report() -> dict:
+    """Return current process RSS using psutil.
+
+    psutil is already a project dependency, and Process.memory_info().rss is
+    a cheap OS-backed call that reflects real resident memory better than GC
+    counters alone.
+    """
+    try:
+        rss_bytes = psutil.Process().memory_info().rss
+    except Exception as exc:
+        return {"available": False, "error": str(exc)}
+
+    return {
+        "available": True,
+        "rss_bytes": rss_bytes,
+        "rss_mb": round(rss_bytes / (1024 * 1024), 1),
+    }
+
+
+def _record_manager_report(manager: "RecordingManager") -> dict:
+    """Return lightweight counters that may expose sustained accumulation."""
+    recordings = getattr(manager, "recordings", []) or []
+    recording_ids = {
+        rec_id
+        for recording in recordings
+        if (rec_id := getattr(recording, "rec_id", None))
+    }
+    checking_count = 0
+    status_checking_count = 0
+    for recording in recordings:
+        if getattr(recording, "is_checking", False):
+            checking_count += 1
+        if getattr(recording, "status_info", None) == RecordingStatus.STATUS_CHECKING:
+            status_checking_count += 1
+
+    predictor_dispatched_ids = set(getattr(manager, "_predictor_dispatched_at", {}))
+    predictor_last_offline_ids = set(getattr(manager, "_predictor_last_offline_result_at", {}))
+
+    return {
+        "recording_count": len(recordings),
+        "active_recorders": len(getattr(manager, "active_recorders", {})),
+        "predictor_dispatched_recordings": len(predictor_dispatched_ids & recording_ids),
+        "predictor_dispatched_stale": len(predictor_dispatched_ids - recording_ids),
+        "predictor_last_offline_sticky_recordings": len(predictor_last_offline_ids & recording_ids),
+        "predictor_last_offline_stale": len(predictor_last_offline_ids - recording_ids),
+        "checking": checking_count,
+        "status_checking": status_checking_count,
     }
 
 

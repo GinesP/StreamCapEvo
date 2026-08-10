@@ -202,10 +202,14 @@ class DiagnosticsCollectReportTests(unittest.TestCase):
 
         report = diag.collect_report(event_bus=eb, language_manager=lm)
         self.assertIn("language_manager", report)
+        self.assertIn("process_memory", report)
         self.assertIn("event_bus", report)
+        self.assertIn("record_manager", report)
         self.assertIn("predictor_store", report)
         self.assertIn("asyncio", report)
         self.assertIn("gc", report)
+        self.assertIsInstance(report["process_memory"], dict)
+        self.assertIsNone(report["record_manager"])
         self.assertIsNone(report["predictor_store"])
 
     def test_with_predictor_store(self):
@@ -223,6 +227,83 @@ class DiagnosticsCollectReportTests(unittest.TestCase):
         report = diag.collect_report(event_bus=eb, language_manager=lm, predictor_store=store)
         self.assertIsNotNone(report["predictor_store"])
         self.assertIsInstance(report["predictor_store"]["db_exists"], bool)
+
+    def test_with_record_manager(self):
+        eb = MagicMock()
+        eb.diagnostic_report.return_value = {"topics": {}, "total_subscribers": 0, "topic_count": 0}
+        lm = MagicMock()
+        lm.observer_count = 2
+
+        checking = MagicMock()
+        checking.is_checking = True
+        checking.status_info = "OTHER"
+
+        status_checking = MagicMock()
+        status_checking.is_checking = False
+        status_checking.status_info = "STATUS_CHECKING"
+
+        both = MagicMock()
+        both.is_checking = True
+        both.status_info = "STATUS_CHECKING"
+
+        manager = MagicMock()
+        manager.recordings = [checking, status_checking, both]
+        manager.active_recorders = {"rec-1": object()}
+        checking.rec_id = "rec-1"
+        status_checking.rec_id = "rec-2"
+        both.rec_id = "rec-3"
+        manager._predictor_dispatched_at = {"rec-1": {"at": datetime.now()}, "deleted-rec": {"at": datetime.now()}}
+        manager._predictor_last_offline_result_at = {
+            "rec-2": datetime.now(),
+            "rec-3": datetime.now(),
+            "deleted-rec": datetime.now(),
+        }
+
+        report = diag.collect_report(event_bus=eb, language_manager=lm, record_manager=manager)
+
+        self.assertEqual(
+            report["record_manager"],
+            {
+                "recording_count": 3,
+                "active_recorders": 1,
+                "predictor_dispatched_recordings": 1,
+                "predictor_dispatched_stale": 1,
+                "predictor_last_offline_sticky_recordings": 2,
+                "predictor_last_offline_stale": 1,
+                "checking": 2,
+                "status_checking": 2,
+            },
+        )
+
+
+class ProcessMemoryDiagnosticReportTests(unittest.TestCase):
+    """_process_memory_report() must expose RSS safely."""
+
+    @patch("app.utils.diagnostics.psutil.Process")
+    def test_reports_rss(self, mock_process_ctor):
+        proc = MagicMock()
+        proc.memory_info.return_value.rss = 157 * 1024 * 1024
+        mock_process_ctor.return_value = proc
+
+        report = diag._process_memory_report()
+
+        self.assertEqual(
+            report,
+            {
+                "available": True,
+                "rss_bytes": 157 * 1024 * 1024,
+                "rss_mb": 157.0,
+            },
+        )
+
+    @patch("app.utils.diagnostics.psutil.Process")
+    def test_handles_psutil_failures(self, mock_process_ctor):
+        mock_process_ctor.side_effect = RuntimeError("no process")
+
+        report = diag._process_memory_report()
+
+        self.assertFalse(report["available"])
+        self.assertIn("error", report)
 
 
 class AsyncioDiagnosticReportTests(unittest.TestCase):
@@ -329,6 +410,7 @@ class TempDiagScoreBreakdownTests(unittest.TestCase):
         debug = forecast.get("_score_debug")
         self.assertIsNotNone(debug)
         self.assertIsInstance(debug, list)
+        assert isinstance(debug, list)
         self.assertGreaterEqual(len(debug), 1)
         self.assertEqual(debug[0][0], "base")
         self.assertEqual(debug[0][1], 0.15)
