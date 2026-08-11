@@ -211,10 +211,12 @@ class LiveStreamRecorder:
             password=self.account_config.get(self.platform_key, {}).get("password"),
             account_type=self.account_config.get(self.platform_key, {}).get("account_type")
         )
-
-        stream_info = await handler.get_stream_info(self.live_url)
-        self.recording.is_checking = False
-        return stream_info
+        handler.begin_status_check()
+        try:
+            return await handler.get_stream_info(self.live_url)
+        finally:
+            handler.end_status_check()
+            self.recording.is_checking = False
 
     async def start_recording(self, stream_info: StreamData):
         """

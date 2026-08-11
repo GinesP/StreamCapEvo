@@ -85,6 +85,13 @@ class RecordingManager:
         except Exception as e:
             logger.debug(f"Predictor metrics skipped: {e}")
 
+    def _clear_recording_bookkeeping(self, rec_id: str | None) -> None:
+        if not rec_id:
+            return
+        self.active_recorders.pop(rec_id, None)
+        self._predictor_dispatched_at.pop(rec_id, None)
+        self._predictor_last_offline_result_at.pop(rec_id, None)
+
     async def _process_priority_queue(self, name: str, queue: asyncio.Queue):
         """Dedicated worker for a specific priority queue."""
         logger.debug(f"Intelligence Worker-{name} started.")
@@ -266,11 +273,14 @@ class RecordingManager:
 
     async def remove_recording(self, recording: Recording):
         with GlobalRecordingState.lock:
+            self._clear_recording_bookkeeping(getattr(recording, "rec_id", None))
             GlobalRecordingState.recordings.remove(recording)
             await self.persist_recordings()
 
     async def clear_all_recordings(self):
         with GlobalRecordingState.lock:
+            for recording in GlobalRecordingState.recordings:
+                self._clear_recording_bookkeeping(getattr(recording, "rec_id", None))
             GlobalRecordingState.recordings.clear()
             await self.persist_recordings()
 
@@ -330,8 +340,7 @@ class RecordingManager:
         if recording.monitor_status:
             # If it's recording, stop it first
             self.stop_recording(recording, manually_stopped=True)
-            self._predictor_dispatched_at.pop(recording.rec_id, None)
-            self._predictor_last_offline_result_at.pop(recording.rec_id, None)
+            self._clear_recording_bookkeeping(recording.rec_id)
             recording._last_snapshot = None
 
             # Now update to stopped monitoring state
@@ -722,6 +731,7 @@ class RecordingManager:
             
             if not stream_info or not stream_info.anchor_name:
                 logger.error(f"Fetch stream data failed: {recording.url}")
+                self._clear_recording_bookkeeping(recording.rec_id)
                 recording.status_info = RecordingStatus.LIVE_STATUS_CHECK_ERROR
                 if recording.monitor_status:
                     self.app.event_bus.publish("update", recording)

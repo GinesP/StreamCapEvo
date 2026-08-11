@@ -66,9 +66,16 @@ from __future__ import annotations
 
 import asyncio
 import gc
+import time
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import psutil
+
+try:
+    import tracemalloc
+except Exception:  # pragma: no cover - platform/runtime dependent
+    tracemalloc = None
 
 from app.models.recording.recording_status_model import RecordingStatus
 
@@ -77,11 +84,14 @@ from app.models.recording.recording_status_model import RecordingStatus
 # that should be cleaned up after the predictive queue investigation.
 # Remove when the "too many streams reaching medium queue" issue is resolved.
 TEMP_DIAG_TAG = "  # TEMP-DIAG"
+_TRACEMALLOC_FRAME_DEPTH = 5
+_TRACEMALLOC_TOP_N = 5
 
 if TYPE_CHECKING:
     from app.core.config.language_manager import LanguageManager
     from app.core.recording.record_manager import RecordingManager
     from app.core.recording.predictor_metrics import PredictorMetricsStore
+    from app.core.runtime.process_manager import AsyncProcessManager
     from app.event_bus import EventBus
 
 
@@ -90,6 +100,7 @@ def collect_report(
     language_manager: LanguageManager,
     record_manager: RecordingManager | None = None,
     predictor_store: PredictorMetricsStore | None = None,
+    process_manager: AsyncProcessManager | None = None,
 ) -> dict:
     """Return a combined diagnostics snapshot.
 
@@ -97,7 +108,8 @@ def collect_report(
     so the user can spot growth in observer/subscriber counts over time.
     """
     return {
-        "process_memory": _process_memory_report(),
+        "process_memory": _process_memory_report(process_manager=process_manager),
+        "python_allocations": _tracemalloc_report(),
         "language_manager": _language_manager_report(language_manager),
         "event_bus": _event_bus_report(event_bus),
         "record_manager": _record_manager_report(record_manager) if record_manager else None,
@@ -122,7 +134,7 @@ def _predictor_store_report(store: PredictorMetricsStore) -> dict:
     }
 
 
-def _process_memory_report() -> dict:
+def _process_memory_report(process_manager: "AsyncProcessManager | None" = None) -> dict:
     """Return current process RSS using psutil.
 
     psutil is already a project dependency, and Process.memory_info().rss is
@@ -134,11 +146,126 @@ def _process_memory_report() -> dict:
     except Exception as exc:
         return {"available": False, "error": str(exc)}
 
+    child_processes = _child_processes_report(process_manager)
+    child_rss_bytes = child_processes.get("rss_bytes", 0)
+
     return {
         "available": True,
         "rss_bytes": rss_bytes,
         "rss_mb": round(rss_bytes / (1024 * 1024), 1),
+        "child_processes": child_processes,
+        "combined_rss_bytes": rss_bytes + child_rss_bytes,
+        "combined_rss_mb": round((rss_bytes + child_rss_bytes) / (1024 * 1024), 1),
     }
+
+
+def _child_processes_report(process_manager: "AsyncProcessManager | None") -> dict:
+    if process_manager is None:
+        return {"known_count": 0, "active_count": 0, "rss_bytes": 0, "rss_mb": 0.0, "by_name": {}, "active": []}
+
+    by_name: dict[str, dict] = {}
+    active = []
+    active_count = 0
+    total_rss_bytes = 0
+
+    for process in list(getattr(process_manager, "ffmpeg_processes", [])):
+        pid = getattr(process, "pid", None)
+        returncode = getattr(process, "returncode", None)
+        if pid is None or returncode is not None:
+            continue
+
+        active_count += 1
+        try:
+            proc = psutil.Process(pid)
+            proc_name = proc.name()
+            rss_bytes = proc.memory_info().rss
+        except Exception as exc:
+            active.append({"pid": pid, "name": "unknown", "available": False, "error": str(exc)})
+            continue
+
+        total_rss_bytes += rss_bytes
+        active.append(
+            {
+                "pid": pid,
+                "name": proc_name,
+                "rss_mb": round(rss_bytes / (1024 * 1024), 1),
+            }
+        )
+        bucket = by_name.setdefault(proc_name, {"count": 0, "rss_bytes": 0})
+        bucket["count"] += 1
+        bucket["rss_bytes"] += rss_bytes
+
+    summarized_by_name = {
+        name: {
+            "count": info["count"],
+            "rss_bytes": info["rss_bytes"],
+            "rss_mb": round(info["rss_bytes"] / (1024 * 1024), 1),
+        }
+        for name, info in sorted(by_name.items())
+    }
+    active.sort(key=lambda item: item.get("rss_mb", -1), reverse=True)
+
+    return {
+        "known_count": len(getattr(process_manager, "ffmpeg_processes", [])),
+        "active_count": active_count,
+        "rss_bytes": total_rss_bytes,
+        "rss_mb": round(total_rss_bytes / (1024 * 1024), 1),
+        "by_name": summarized_by_name,
+        "active": active,
+    }
+
+
+def _tracemalloc_report(top_n: int = _TRACEMALLOC_TOP_N) -> dict:
+    """Return a bounded tracemalloc summary grouped by allocating file."""
+    if tracemalloc is None:
+        return {"available": False, "enabled": False, "reason": "unavailable"}
+
+    started_now = False
+    try:
+        if not tracemalloc.is_tracing():
+            tracemalloc.start(_TRACEMALLOC_FRAME_DEPTH)
+            started_now = True
+
+        snapshot = tracemalloc.take_snapshot()
+        stats = snapshot.statistics("filename")
+    except Exception as exc:
+        return {"available": False, "enabled": False, "error": str(exc)}
+
+    top_stats = stats[:top_n]
+    top_total = sum(stat.size for stat in top_stats)
+    total_traced = sum(stat.size for stat in stats)
+
+    return {
+        "available": True,
+        "enabled": True,
+        "started_now": started_now,
+        "traceback_limit": tracemalloc.get_traceback_limit(),
+        "top": [
+            {
+                "file": _format_tracemalloc_filename(stat.traceback[0].filename),
+                "size_bytes": stat.size,
+                "size_mb": round(stat.size / (1024 * 1024), 3),
+                "count": stat.count,
+            }
+            for stat in top_stats
+        ],
+        "top_total_bytes": top_total,
+        "top_total_mb": round(top_total / (1024 * 1024), 3),
+        "other_bytes": max(total_traced - top_total, 0),
+        "other_mb": round(max(total_traced - top_total, 0) / (1024 * 1024), 3),
+        "total_traced_bytes": total_traced,
+        "total_traced_mb": round(total_traced / (1024 * 1024), 3),
+    }
+
+
+def _format_tracemalloc_filename(filename: str) -> str:
+    parts = Path(filename).parts
+    for anchor in ("app", "tests"):
+        if anchor in parts:
+            return Path(*parts[parts.index(anchor) :]).as_posix()
+    if len(parts) <= 3:
+        return Path(filename).as_posix()
+    return Path(*parts[-3:]).as_posix()
 
 
 def _record_manager_report(manager: "RecordingManager") -> dict:
@@ -159,10 +286,12 @@ def _record_manager_report(manager: "RecordingManager") -> dict:
 
     predictor_dispatched_ids = set(getattr(manager, "_predictor_dispatched_at", {}))
     predictor_last_offline_ids = set(getattr(manager, "_predictor_last_offline_result_at", {}))
+    active_recorder_details = _active_recorder_details(getattr(manager, "active_recorders", {}))
 
     return {
         "recording_count": len(recordings),
         "active_recorders": len(getattr(manager, "active_recorders", {})),
+        "active_recorder_details": active_recorder_details,
         "predictor_dispatched_recordings": len(predictor_dispatched_ids & recording_ids),
         "predictor_dispatched_stale": len(predictor_dispatched_ids - recording_ids),
         "predictor_last_offline_sticky_recordings": len(predictor_last_offline_ids & recording_ids),
@@ -170,6 +299,24 @@ def _record_manager_report(manager: "RecordingManager") -> dict:
         "checking": checking_count,
         "status_checking": status_checking_count,
     }
+
+
+def _active_recorder_details(active_recorders: dict) -> list[dict]:
+    details = []
+    now = time.time()
+    for rec_id, recorder in active_recorders.items():
+        recording = getattr(recorder, "recording", None)
+        started_at = getattr(recorder, "recording_start_time", 0) or 0
+        details.append(
+            {
+                "rec_id": rec_id,
+                "streamer": getattr(recording, "streamer_name", None),
+                "status": getattr(recording, "status_info", None),
+                "output": "direct" if getattr(recorder, "direct_downloader", None) else "ffmpeg",
+                "duration_s": round(now - started_at, 1) if started_at > 0 else None,
+            }
+        )
+    return sorted(details, key=lambda item: item["rec_id"])
 
 
 def _asyncio_report() -> dict:

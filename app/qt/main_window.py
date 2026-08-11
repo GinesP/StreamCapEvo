@@ -373,6 +373,11 @@ class MainWindow(QMainWindow):
                     and hasattr(self.app.record_manager, "predictor_metrics")
                     else None
                 ),
+                process_manager=(
+                    self.app.process_manager
+                    if hasattr(self.app, "process_manager") and self.app.process_manager is not None
+                    else None
+                ),
             )
             _log.info("=== DIAGNOSTICS ===")
             for section, data in report.items():

@@ -32,6 +32,7 @@ class PlatformHandler(abc.ABC):
         self.username = username
         self.password = password
         self.account_type = account_type
+        self._active_status_checks = 0
 
     @abc.abstractmethod
     async def get_stream_info(self, live_url: str) -> StreamData:
@@ -39,6 +40,20 @@ class PlatformHandler(abc.ABC):
         Abstract method to get stream information based on the live URL.
         """
         pass
+
+    def release_status_check_state(self) -> None:
+        """Drop transient stream state retained across periodic checks."""
+        if getattr(self, "_active_status_checks", 0) > 0:
+            return
+        if hasattr(self, "live_stream"):
+            self.live_stream = None
+
+    def begin_status_check(self) -> None:
+        self._active_status_checks = getattr(self, "_active_status_checks", 0) + 1
+
+    def end_status_check(self) -> None:
+        self._active_status_checks = max(getattr(self, "_active_status_checks", 0) - 1, 0)
+        self.release_status_check_state()
 
     @classmethod
     def register(cls: type[T], *patterns: str) -> type[T]:

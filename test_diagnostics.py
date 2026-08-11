@@ -8,7 +8,8 @@ import asyncio
 import os
 import unittest
 from datetime import datetime
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.event_bus import EventBus
 from app.core.config.language_manager import LanguageManager
@@ -16,6 +17,7 @@ from app.core.recording.history_manager import HistoryManager
 from app.core.recording.precog import Precog, PrecogSnapshot
 from app.core.recording.stream_manager import LiveStreamRecorder
 from app.models.recording.recording_model import Recording
+from app.models.recording.recording_status_model import RecordingStatus
 from app.utils import diagnostics as diag
 
 
@@ -191,6 +193,46 @@ class LiveStreamRecorderObserverCleanupTests(unittest.TestCase):
         self.assertEqual(lm.observer_count, 0)
 
 
+class LiveStreamRecorderFetchCleanupTests(unittest.TestCase):
+    def test_fetch_stream_releases_cached_live_stream_after_status_check(self):
+        app = MagicMock()
+        app.language_manager.language = {}
+        app.settings = MagicMock(spec=["user_config", "accounts_config", "cookies_config"])
+        app.settings.user_config = {}
+        app.settings.accounts_config = {}
+        app.settings.cookies_config = {}
+        app.subprocess_start_up_info = None
+
+        recording = MagicMock()
+        recording.is_checking = True
+        recording_info = {
+            "platform": "test-platform",
+            "platform_key": "test-platform",
+            "live_url": "https://example.com/live",
+            "output_dir": os.getcwd(),
+            "quality": "HD",
+        }
+
+        recorder = LiveStreamRecorder(app, recording, recording_info)
+        handler = MagicMock()
+        handler.begin_status_check = MagicMock()
+        handler.end_status_check = MagicMock(side_effect=lambda: setattr(handler, "live_stream", None))
+        handler.live_stream = object()
+        handler.get_stream_info = AsyncMock(return_value=MagicMock())
+
+        with patch(
+            "app.core.recording.stream_manager.platform_handlers.get_platform_handler",
+            return_value=handler,
+        ):
+            stream_info = asyncio.run(recorder.fetch_stream())
+
+        self.assertIsNotNone(stream_info)
+        handler.begin_status_check.assert_called_once_with()
+        handler.end_status_check.assert_called_once_with()
+        self.assertIsNone(handler.live_stream)
+        self.assertFalse(recording.is_checking)
+
+
 class DiagnosticsCollectReportTests(unittest.TestCase):
     """collect_report() must compose a valid dict."""
 
@@ -203,12 +245,14 @@ class DiagnosticsCollectReportTests(unittest.TestCase):
         report = diag.collect_report(event_bus=eb, language_manager=lm)
         self.assertIn("language_manager", report)
         self.assertIn("process_memory", report)
+        self.assertIn("python_allocations", report)
         self.assertIn("event_bus", report)
         self.assertIn("record_manager", report)
         self.assertIn("predictor_store", report)
         self.assertIn("asyncio", report)
         self.assertIn("gc", report)
         self.assertIsInstance(report["process_memory"], dict)
+        self.assertIsInstance(report["python_allocations"], dict)
         self.assertIsNone(report["record_manager"])
         self.assertIsNone(report["predictor_store"])
 
@@ -246,9 +290,18 @@ class DiagnosticsCollectReportTests(unittest.TestCase):
         both.is_checking = True
         both.status_info = "STATUS_CHECKING"
 
+        active_recording = MagicMock()
+        active_recording.streamer_name = "Streamer One"
+        active_recording.status_info = RecordingStatus.RECORDING
+
+        active_recorder = MagicMock()
+        active_recorder.recording = active_recording
+        active_recorder.direct_downloader = None
+        active_recorder.recording_start_time = 10.0
+
         manager = MagicMock()
         manager.recordings = [checking, status_checking, both]
-        manager.active_recorders = {"rec-1": object()}
+        manager.active_recorders = {"rec-1": active_recorder}
         checking.rec_id = "rec-1"
         status_checking.rec_id = "rec-2"
         both.rec_id = "rec-3"
@@ -259,13 +312,23 @@ class DiagnosticsCollectReportTests(unittest.TestCase):
             "deleted-rec": datetime.now(),
         }
 
-        report = diag.collect_report(event_bus=eb, language_manager=lm, record_manager=manager)
+        with patch("app.utils.diagnostics.time.time", return_value=25.0):
+            report = diag.collect_report(event_bus=eb, language_manager=lm, record_manager=manager)
 
         self.assertEqual(
             report["record_manager"],
             {
                 "recording_count": 3,
                 "active_recorders": 1,
+                "active_recorder_details": [
+                    {
+                        "rec_id": "rec-1",
+                        "streamer": "Streamer One",
+                        "status": RecordingStatus.RECORDING,
+                        "output": "ffmpeg",
+                        "duration_s": 15.0,
+                    }
+                ],
                 "predictor_dispatched_recordings": 1,
                 "predictor_dispatched_stale": 1,
                 "predictor_last_offline_sticky_recordings": 2,
@@ -287,14 +350,11 @@ class ProcessMemoryDiagnosticReportTests(unittest.TestCase):
 
         report = diag._process_memory_report()
 
-        self.assertEqual(
-            report,
-            {
-                "available": True,
-                "rss_bytes": 157 * 1024 * 1024,
-                "rss_mb": 157.0,
-            },
-        )
+        self.assertTrue(report["available"])
+        self.assertEqual(report["rss_bytes"], 157 * 1024 * 1024)
+        self.assertEqual(report["rss_mb"], 157.0)
+        self.assertEqual(report["child_processes"]["active_count"], 0)
+        self.assertEqual(report["combined_rss_mb"], 157.0)
 
     @patch("app.utils.diagnostics.psutil.Process")
     def test_handles_psutil_failures(self, mock_process_ctor):
@@ -304,6 +364,94 @@ class ProcessMemoryDiagnosticReportTests(unittest.TestCase):
 
         self.assertFalse(report["available"])
         self.assertIn("error", report)
+
+    @patch("app.utils.diagnostics.psutil.Process")
+    def test_includes_child_process_summary(self, mock_process_ctor):
+        parent_proc = MagicMock()
+        parent_proc.memory_info.return_value.rss = 157 * 1024 * 1024
+
+        child_proc = MagicMock()
+        child_proc.name.return_value = "ffmpeg.exe"
+        child_proc.memory_info.return_value.rss = 64 * 1024 * 1024
+
+        def process_side_effect(pid=None):
+            if pid is None:
+                return parent_proc
+            if pid == 101:
+                return child_proc
+            raise RuntimeError("missing process")
+
+        mock_process_ctor.side_effect = process_side_effect
+
+        process_manager = MagicMock()
+        active = MagicMock(pid=101, returncode=None)
+        finished = MagicMock(pid=102, returncode=0)
+        process_manager.ffmpeg_processes = [active, finished]
+
+        report = diag._process_memory_report(process_manager=process_manager)
+
+        self.assertEqual(report["rss_mb"], 157.0)
+        self.assertEqual(report["child_processes"]["active_count"], 1)
+        self.assertEqual(report["child_processes"]["rss_mb"], 64.0)
+        self.assertEqual(report["child_processes"]["by_name"]["ffmpeg.exe"]["count"], 1)
+        self.assertEqual(report["combined_rss_mb"], 221.0)
+
+
+class TracemallocDiagnosticReportTests(unittest.TestCase):
+    """_tracemalloc_report() must stay bounded and safe."""
+
+    def test_reports_unavailable_when_module_missing(self):
+        with patch("app.utils.diagnostics.tracemalloc", None):
+            report = diag._tracemalloc_report()
+
+        self.assertFalse(report["available"])
+        self.assertFalse(report["enabled"])
+        self.assertEqual(report["reason"], "unavailable")
+
+    def test_starts_tracing_lazily_and_summarizes_top_files(self):
+        stat_a = MagicMock()
+        stat_a.size = 3 * 1024 * 1024
+        stat_a.count = 12
+        stat_a.traceback = [SimpleNamespace(filename="C:/Users/gperez/dev/StreamCapEvo/app/core/recording/manager.py")]
+
+        stat_b = MagicMock()
+        stat_b.size = 1 * 1024 * 1024
+        stat_b.count = 4
+        stat_b.traceback = [SimpleNamespace(filename="C:/Python311/Lib/site-packages/pkg/module.py")]
+
+        snapshot = MagicMock()
+        snapshot.statistics.return_value = [stat_a, stat_b]
+
+        trace_api = MagicMock()
+        trace_api.is_tracing.return_value = False
+        trace_api.take_snapshot.return_value = snapshot
+        trace_api.get_traceback_limit.return_value = 5
+
+        with patch("app.utils.diagnostics.tracemalloc", trace_api):
+            report = diag._tracemalloc_report(top_n=1)
+
+        trace_api.start.assert_called_once_with(5)
+        self.assertTrue(report["available"])
+        self.assertTrue(report["enabled"])
+        self.assertTrue(report["started_now"])
+        self.assertEqual(report["traceback_limit"], 5)
+        self.assertEqual(len(report["top"]), 1)
+        self.assertEqual(report["top"][0]["file"], "app/core/recording/manager.py")
+        self.assertEqual(report["top"][0]["size_mb"], 3.0)
+        self.assertEqual(report["top_total_bytes"], 3 * 1024 * 1024)
+        self.assertEqual(report["other_bytes"], 1 * 1024 * 1024)
+
+    def test_handles_snapshot_failures(self):
+        trace_api = MagicMock()
+        trace_api.is_tracing.return_value = True
+        trace_api.take_snapshot.side_effect = RuntimeError("snapshot failed")
+
+        with patch("app.utils.diagnostics.tracemalloc", trace_api):
+            report = diag._tracemalloc_report()
+
+        self.assertFalse(report["available"])
+        self.assertFalse(report["enabled"])
+        self.assertIn("snapshot failed", report["error"])
 
 
 class AsyncioDiagnosticReportTests(unittest.TestCase):

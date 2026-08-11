@@ -2,7 +2,8 @@
 
 import asyncio
 import unittest
-from unittest.mock import MagicMock, patch
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.recording.precog import PrecogSnapshot
 from app.core.recording.record_manager import GlobalRecordingState, RecordingManager
@@ -440,6 +441,105 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             self.assertIsNone(recording._last_snapshot)
             self.assertEqual(recording._last_queue_key, "S")
             self.assertEqual(recording._last_likelihood, 0.42)
+
+        asyncio.run(_run())
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    @patch("app.core.recording.record_manager.LiveStreamRecorder")
+    @patch("app.core.recording.record_manager.get_platform_info")
+    def test_check_if_live_fetch_failure_clears_predictor_bookkeeping(
+        self, mock_platform_info, mock_recorder_cls, mock_metrics
+    ):
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.settings.get_video_save_path.return_value = "/tmp"
+            app.recording_enabled = True
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {"HD": "HD"}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            GlobalRecordingState.recordings = [recording]
+            manager._predictor_dispatched_at[recording.rec_id] = {"at": datetime.now(), "likelihood": 0.9}
+            manager._predictor_last_offline_result_at[recording.rec_id] = MagicMock()
+            manager.active_recorders[recording.rec_id] = MagicMock(should_stop=True)
+            manager.check_free_space = AsyncMock()
+
+            mock_platform_info.return_value = ("test-platform", "test-platform")
+            mock_recorder = MagicMock()
+            mock_recorder.fetch_stream = AsyncMock(return_value=None)
+            mock_recorder_cls.return_value = mock_recorder
+
+            await manager.check_if_live(recording)
+
+            self.assertNotIn(recording.rec_id, manager._predictor_dispatched_at)
+            self.assertNotIn(recording.rec_id, manager._predictor_last_offline_result_at)
+            self.assertNotIn(recording.rec_id, manager.active_recorders)
+
+        asyncio.run(_run())
+
+    @patch("app.core.recording.record_manager.PredictorMetricsStore")
+    def test_remove_recording_clears_predictor_and_active_recorder_bookkeeping(
+        self, mock_metrics
+    ):
+        async def _run():
+            app = MagicMock()
+            app.settings.user_config.get = _settings_get
+            app.config_manager.config_path = "/tmp"
+            app.config_manager.load_recordings_config.return_value = []
+            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
+            app.language_manager.add_observer = MagicMock()
+            app.event_bus.publish = MagicMock()
+            app.event_bus.run_task = MagicMock()
+
+            manager = RecordingManager(app)
+
+            for name in list(manager._pool_workers):
+                for task in manager._pool_workers[name]:
+                    task.cancel()
+                    try:
+                        await task
+                    except (asyncio.CancelledError, RuntimeError):
+                        pass
+                manager._pool_workers[name] = []
+            manager._adaptive_monitor.cancel()
+            try:
+                await manager._adaptive_monitor
+            except (asyncio.CancelledError, RuntimeError):
+                pass
+
+            recording = _make_recording(monitor_status=True)
+            GlobalRecordingState.recordings = [recording]
+            manager._predictor_dispatched_at[recording.rec_id] = {"at": datetime.now(), "likelihood": 0.5}
+            manager._predictor_last_offline_result_at[recording.rec_id] = MagicMock()
+            manager.active_recorders[recording.rec_id] = MagicMock()
+
+            await manager.remove_recording(recording)
+
+            self.assertNotIn(recording.rec_id, manager._predictor_dispatched_at)
+            self.assertNotIn(recording.rec_id, manager._predictor_last_offline_result_at)
+            self.assertNotIn(recording.rec_id, manager.active_recorders)
+            self.assertNotIn(recording, GlobalRecordingState.recordings)
 
         asyncio.run(_run())
 
