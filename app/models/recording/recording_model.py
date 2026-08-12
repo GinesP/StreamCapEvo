@@ -101,6 +101,7 @@ class Recording:
         self.cover_url = cover_url
         self.is_favorite = bool(is_favorite)
         self.live_sessions = live_sessions if isinstance(live_sessions, list) else []
+        self.prune_live_sessions()
         self.current_live_session_start = current_live_session_start
         
         self.scheduled_time_range = None

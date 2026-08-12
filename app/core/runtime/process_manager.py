@@ -73,6 +73,10 @@ class AsyncProcessManager:
     def add_process(self, process):
         self.ffmpeg_processes.append(process)
 
+    def remove_process(self, process):
+        if process in self.ffmpeg_processes:
+            self.ffmpeg_processes.remove(process)
+
     async def cleanup(self):
         for process in self.ffmpeg_processes[:]:
             try:
@@ -92,10 +96,9 @@ class AsyncProcessManager:
                         process.kill()
                         await process.wait()
 
-                self.ffmpeg_processes.remove(process)
+                self.remove_process(process)
             except Exception as e:
                 logger.error(f"Error cleaning up process: {e}")
-                if process in self.ffmpeg_processes:
-                    self.ffmpeg_processes.remove(process)
+                self.remove_process(process)
 
         logger.debug("All processes cleaned up")

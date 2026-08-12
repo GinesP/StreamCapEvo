@@ -109,3 +109,6 @@ class QtApp:
 
     def add_ffmpeg_process(self, process):
         self.process_manager.add_process(process)
+
+    def remove_ffmpeg_process(self, process):
+        self.process_manager.remove_process(process)

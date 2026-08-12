@@ -112,6 +112,36 @@ class TestRecordingToDictHotFields(unittest.TestCase):
         self.assertEqual(rec.live_check_count, 0)
         self.assertEqual(rec.priority_score, 0.0)
 
+    def test_from_dict_prunes_oversized_live_sessions_history(self):
+        """Loaded persisted histories should be bounded to the session limit."""
+        live_sessions = [
+            {"start_time": f"2026-01-{(i % 28) + 1:02d}T10:00:00", "weekday": i % 7, "start_hour": 10}
+            for i in range(Recording.LIVE_SESSION_LIMIT + 5)
+        ]
+        data = {
+            "rec_id": "test-4",
+            "url": "http://example.com/pruned",
+            "streamer_name": "PrunedStream",
+            "record_format": "mp4",
+            "quality": "HD",
+            "segment_record": False,
+            "segment_time": 3600,
+            "monitor_status": True,
+            "scheduled_recording": False,
+            "scheduled_start_time": None,
+            "monitor_hours": 2,
+            "recording_dir": "/tmp",
+            "enabled_message_push": False,
+            "only_notify_no_record": False,
+            "flv_use_direct_download": False,
+            "live_sessions": live_sessions,
+        }
+
+        rec = Recording.from_dict(data)
+
+        self.assertEqual(len(rec.live_sessions), Recording.LIVE_SESSION_LIMIT)
+        self.assertEqual(rec.live_sessions, live_sessions[-Recording.LIVE_SESSION_LIMIT:])
+
     def test_no_save_churn_when_only_hot_fields_change(self):
         """Simulate the save path: to_dict differences must NOT come from hot fields.
 

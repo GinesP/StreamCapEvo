@@ -341,6 +341,7 @@ class LiveStreamRecorder:
 
         logger.info(tr("console.starting_ffmpeg", "Starting ffmpeg recording - recorder id: {}, rec_id: {}").format(id(self), self.recording.rec_id))
         self.should_stop = False
+        process = None
 
         try:
             save_file_path = ffmpeg_command[-1]
@@ -512,6 +513,8 @@ class LiveStreamRecorder:
                 logger.debug(f"Failed to update UI: {e}")
             return False
         finally:
+            if process is not None:
+                self.app.remove_ffmpeg_process(process)
             self.recording.record_url = None
 
         return True
@@ -541,6 +544,7 @@ class LiveStreamRecorder:
         """Actual execution method for transcoding"""
         converts_success = False
         save_path = None
+        process = None
         try:
             converts_file_path = converts_file_path.replace("\\", "/")
 
@@ -603,6 +607,9 @@ class LiveStreamRecorder:
 
         except subprocess.CalledProcessError as e:
             logger.error(f"Video transcoding failed! Error message: {e.output.decode()}")
+        finally:
+            if process is not None:
+                self.app.remove_ffmpeg_process(process)
 
         try:
             if converts_success:
