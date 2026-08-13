@@ -21,9 +21,10 @@ from PySide6.QtGui import QFont, QIcon
 # Ensure the project root is in the Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from app.qt_app_manager import QtApp
 from app.qt.main_window import MainWindow
 from app.qt.utils.typography import BODY_FONT_FAMILY, body_font, load_app_fonts
+from app.qt_app_manager import QtApp
+from app.utils.warning_capture import install_warning_capture
 
 _qt_app = None
 
@@ -46,6 +47,9 @@ async def start_app():
 
 def main():
     """Main entry point."""
+    # Route Python warnings (e.g. asyncio "coroutine was never awaited") into the app log
+    install_warning_capture()
+
     # Silence specific Qt warnings
     os.environ["QT_LOGGING_RULES"] = "qt.qpa.fonts.warning=false;qt.qpa.fonts=false"
     QLoggingCategory.setFilterRules("qt.qpa.fonts.warning=false")
