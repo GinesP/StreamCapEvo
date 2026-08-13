@@ -9,7 +9,6 @@ from ...models.recording.recording_model import Recording
 from ...models.recording.recording_status_model import RecordingStatus
 from ...utils import utils
 from ...utils.delay import DelayedTaskExecutor
-from ...utils.diagnostics import TEMP_DIAG_TAG  # TEMP-DIAG
 from ...utils.i18n import tr
 from ...utils.logger import logger
 from ..platforms.platform_handlers import get_platform_info
@@ -451,11 +450,11 @@ class RecordingManager:
             from .precog import Precog
             base_interval = int(self.settings.user_config.get("loop_time_seconds", 300))
             recording.loop_time_seconds = base_interval
-            snap = Precog.snapshot(recording, now=None, include_debug=True)  # TEMP-DIAG
+            snap = Precog.snapshot(recording, now=None)
             # Only persist lightweight fallback fields — NOT the full PrecogSnapshot.
             # The full snapshot is used immediately for operational decisions but
             # MUST NOT be retained on recording to avoid memory pressure from
-            # forecast_details (with _score_debug) and time_state.
+            # forecast_details and time_state.
             recording._last_queue_key = snap.queue_key
             recording._last_likelihood = snap.likelihood
             _precog_snapshots[recording.rec_id] = snap
@@ -501,19 +500,7 @@ class RecordingManager:
                     self._queue_slow.put_nowait(recording)
                     dispatched_slow += 1
                 
-                # TEMP-DIAG: queue assignment trace with window state and score breakdown
-                _details = getattr(snap, 'forecast_details', None) or {}
-                _debug = _details.get("_score_debug", {}) if isinstance(_details, dict) else {}
-                _stages = _debug.get("stages", _debug if isinstance(_debug, list) else [])
-                _stages_str = ""
-                if isinstance(_stages, list) and _stages:
-                    _stages_str = ", stages: [" + " → ".join(
-                        f"{lbl}={s:.3f}" for lbl, s in _stages
-                    ) + "]"
-                _cap_str = ""
-                if isinstance(_debug, dict):
-                    if _debug.get("cap_applied"):
-                        _cap_str = f", capped_from={_debug.get('pre_cap_interval', '?')}s"
+                # Debug trace: queue assignment with operational snapshot fields only
                 _interval = getattr(snap, 'adjusted_interval', None)
                 _interval_str = f", interval={_interval}s" if isinstance(_interval, (int, float)) else ""
                 _ws = getattr(snap, 'window_state', '?')
@@ -527,8 +514,7 @@ class RecordingManager:
                     f", reason={getattr(snap, 'reason_key', '')}"
                     f"{_interval_str}"
                     f", window=({_ws},{_wc})"
-                    f", fav={bool(getattr(recording, 'is_favorite', False))}"
-                    f"{_cap_str}{_stages_str}){TEMP_DIAG_TAG}"
+                    f", fav={bool(getattr(recording, 'is_favorite', False))})"
                 )
             else:
                 skipping_count += 1
@@ -541,28 +527,6 @@ class RecordingManager:
                 f"Disp({dispatched_fast}F+{dispatched_medium}M+{dispatched_slow}S) | "
                 f"Busy({busy_fast}F+{busy_medium}M+{busy_slow}S) | "
                 f"{skipping_count} waiting</yellow>"
-            )
-
-        # TEMP-DIAG: per-cycle predictor churn (snapshot counts, horizons, debug stages)
-        if _precog_snapshots:
-            _ws_counts: dict[str, int] = {}
-            _has_debug = 0
-            _horizons_total = 0
-            for _snap in _precog_snapshots.values():
-                _ws = getattr(_snap, 'window_state', '?')
-                _ws_counts[_ws] = _ws_counts.get(_ws, 0) + 1
-                _fd = getattr(_snap, 'forecast_details', {}) or {}
-                if isinstance(_fd, dict) and _fd.get('_score_debug'):
-                    _has_debug += 1
-                if isinstance(_fd, dict):
-                    _fd_h = _fd.get("horizons", {})
-                    if isinstance(_fd_h, dict):
-                        _horizons_total += len(_fd_h)
-            _n = len(_precog_snapshots)
-            logger.debug(
-                f"Intelligence Cycle TEMP-DIAG: "
-                f"snapshots={_n}, horizons={_horizons_total}, debug_snapshots={_has_debug}, "
-                f"window_states={_ws_counts}{TEMP_DIAG_TAG}"
             )
 
         # Publish structured data so the dashboard can update in real-time

@@ -138,6 +138,8 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             args, kwargs = mock_snapshot.call_args
             self.assertIs(args[0], recording)
             self.assertIsNone(kwargs.get("now"))
+            # Hot path must NOT request the TEMP-DIAG debug payload
+            self.assertNotIn("include_debug", kwargs)
             self.assertEqual(recording.loop_time_seconds, 300)
 
         asyncio.run(_run())
@@ -540,146 +542,6 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             self.assertNotIn(recording.rec_id, manager._predictor_last_offline_result_at)
             self.assertNotIn(recording.rec_id, manager.active_recorders)
             self.assertNotIn(recording, GlobalRecordingState.recordings)
-
-        asyncio.run(_run())
-
-
-class TempDiagHorizonsReporting(unittest.TestCase):
-    """TEMP-DIAG: verify horizons count uses real data, not static multiplier."""
-
-    def setUp(self):
-        GlobalRecordingState.recordings = []
-
-    def tearDown(self):
-        GlobalRecordingState.recordings = []
-
-    def _make_snap(self, horizons: dict | None = None, has_debug: bool = False):
-        snap = MagicMock(spec=PrecogSnapshot)
-        snap.window_state = "outside"
-        snap.window_confidence = "low"
-        snap.likelihood = 0.5
-        snap.confidence = "medium"
-        snap.queue_key = "S"
-        snap.should_check = False
-        snap.adjusted_interval = 300
-        snap.reason_key = ""
-        snap.time_state = {"state": "outside"}
-        snap.is_stale = False
-        snap.priority_score = 0.0
-        snap.consistency_score = 0.0
-        snap.forecast_details = None  # will replace below
-        fd = {"horizons": horizons if horizons is not None else {}}
-        if has_debug:
-            fd["_score_debug"] = [("base", 0.15)]
-        snap.forecast_details = fd
-        return snap
-
-    @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    @patch("app.core.recording.record_manager.logger")
-    def test_reports_zero_horizons_when_not_computed(
-        self, mock_logger, mock_metrics
-    ):
-        """Default include_horizons=False → horizons=0 in TEMP-DIAG."""
-        snap = self._make_snap(horizons={})
-
-        async def _run():
-            app = MagicMock()
-            app.settings.user_config.get = _settings_get
-            app.config_manager.config_path = "/tmp"
-            app.config_manager.load_recordings_config.return_value = []
-            app.language_manager.language = {"recording_manager": {}, "video_quality": {"HD": "HD"}}
-            app.language_manager.add_observer = MagicMock()
-            app.event_bus.publish = MagicMock()
-            app.event_bus.run_task = MagicMock()
-
-            manager = RecordingManager(app)
-
-            for name in list(manager._pool_workers):
-                for task in manager._pool_workers[name]:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
-                manager._pool_workers[name] = []
-            manager._adaptive_monitor.cancel()
-            try:
-                await manager._adaptive_monitor
-            except (asyncio.CancelledError, RuntimeError):
-                pass
-
-            recording = _make_recording(monitor_status=True)
-            GlobalRecordingState.recordings = [recording]
-
-            with patch(
-                "app.core.recording.precog.Precog.snapshot",
-                return_value=snap,
-            ):
-                await manager.check_all_live_status()
-
-            # Find the TEMP-DIAG debug call and check horizons=0
-            diag_calls = [
-                c for c in mock_logger.debug.call_args_list
-                if "TEMP-DIAG" in str(c)
-            ]
-            self.assertTrue(
-                any("horizons=0" in str(c) for c in diag_calls),
-                f"Expected horizons=0 in TEMP-DIAG, got: {diag_calls}",
-            )
-
-        asyncio.run(_run())
-
-    @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    @patch("app.core.recording.record_manager.logger")
-    def test_reports_real_horizons_when_computed(
-        self, mock_logger, mock_metrics
-    ):
-        """include_horizons=True → horizons>0 in TEMP-DIAG."""
-        snap = self._make_snap(horizons={15: 0.9, 30: 0.8, 60: 0.7})
-
-        async def _run():
-            app = MagicMock()
-            app.settings.user_config.get = _settings_get
-            app.config_manager.config_path = "/tmp"
-            app.config_manager.load_recordings_config.return_value = []
-            app.language_manager.language = {"recording_manager": {}, "video_quality": {"HD": "HD"}}
-            app.language_manager.add_observer = MagicMock()
-            app.event_bus.publish = MagicMock()
-            app.event_bus.run_task = MagicMock()
-
-            manager = RecordingManager(app)
-
-            for name in list(manager._pool_workers):
-                for task in manager._pool_workers[name]:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
-                manager._pool_workers[name] = []
-            manager._adaptive_monitor.cancel()
-            try:
-                await manager._adaptive_monitor
-            except (asyncio.CancelledError, RuntimeError):
-                pass
-
-            recording = _make_recording(monitor_status=True)
-            GlobalRecordingState.recordings = [recording]
-
-            with patch(
-                "app.core.recording.precog.Precog.snapshot",
-                return_value=snap,
-            ):
-                await manager.check_all_live_status()
-
-            diag_calls = [
-                c for c in mock_logger.debug.call_args_list
-                if "TEMP-DIAG" in str(c)
-            ]
-            self.assertTrue(
-                any("horizons=3" in str(c) for c in diag_calls),
-                f"Expected horizons=3 in TEMP-DIAG, got: {diag_calls}",
-            )
 
         asyncio.run(_run())
 
