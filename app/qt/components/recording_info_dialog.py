@@ -40,6 +40,7 @@ class QtRecordingInfoDialog(QDialog):
         self.setMinimumWidth(450)
         self.setMinimumHeight(500)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         apply_elevation(self, level=2)
 
         self._setup_ui()

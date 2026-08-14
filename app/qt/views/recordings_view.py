@@ -63,9 +63,19 @@ class RecordingListModel(QAbstractListModel):
         return None
 
     def set_recordings(self, recordings: list) -> None:
+        new_recordings = list(recordings)
+        if self._same_recordings(new_recordings):
+            return
         self.beginResetModel()
-        self._recordings = list(recordings)
+        self._recordings = new_recordings
         self.endResetModel()
+
+    def _same_recordings(self, recordings: list) -> bool:
+        """True when *recordings* holds the same objects in the same order."""
+        current = self._recordings
+        if len(current) != len(recordings):
+            return False
+        return all(existing is incoming for existing, incoming in zip(current, recordings))
 
     def recordings(self) -> list:
         return list(self._recordings)
@@ -283,10 +293,10 @@ class QtRecordingsView(QWidget):
         self._update_platform_list()
         self._subscribe_events()
         
-        # 1-second timer for real-time card updates (timer/status)
+        # 1-second timer for real-time card updates (timer/status).
+        # Started/stopped from showEvent/hideEvent so it only runs while visible.
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._on_refresh_tick)
-        self._refresh_timer.start(1000)
 
         theme_manager.themeChanged.connect(self._on_theme_changed)
 
@@ -300,7 +310,7 @@ class QtRecordingsView(QWidget):
 
     def showEvent(self, event):  # noqa: N802
         """Triggered when the view becomes visible (e.g. first show or tab switch).
-        
+
         We defer _redraw_grid() with QTimer.singleShot(0) so it runs AFTER Qt
         has finished laying out the window and scroll.viewport().width() returns
         the real width. Without this, the initial grid layout computed during
@@ -308,7 +318,25 @@ class QtRecordingsView(QWidget):
         the top-left corner.
         """
         super().showEvent(event)
+        self._start_refresh_timer()
         QTimer.singleShot(0, self._redraw_grid)
+
+    def hideEvent(self, event):  # noqa: N802
+        """Triggered when the view becomes hidden (e.g. tab switch).
+
+        The 1-second refresh timer only drives visible repaints, so pause it
+        while hidden to avoid always-live window repaint churn.
+        """
+        super().hideEvent(event)
+        self._stop_refresh_timer()
+
+    def _start_refresh_timer(self) -> None:
+        if self._refresh_timer and not self._refresh_timer.isActive():
+            self._refresh_timer.start(1000)
+
+    def _stop_refresh_timer(self) -> None:
+        if self._refresh_timer and self._refresh_timer.isActive():
+            self._refresh_timer.stop()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)

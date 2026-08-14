@@ -39,6 +39,7 @@ class QtAddStreamDialog(QDialog):
         self.setMinimumWidth(500)
         self.setMinimumHeight(450)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         apply_elevation(self, level=2)
         
         self._setup_ui()

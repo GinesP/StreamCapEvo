@@ -24,6 +24,7 @@ class QtConfirmDialog(QDialog):
         self.setMinimumWidth(380)
         self.setModal(True)
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         apply_elevation(self, level=2)
         
         # We don't want standard title bar icons if we want a clean look
