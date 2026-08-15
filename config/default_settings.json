@@ -68,5 +68,6 @@
     "sidebar_collapsed": false,
     "platform_max_concurrent_requests": "3",
     "last_route": "/home",
-    "check_live_on_browser_refresh": false
+    "check_live_on_browser_refresh": false,
+    "enable_predictor_metrics": true
 }

@@ -78,7 +78,19 @@ class RecordingManager:
 
         self._adaptive_monitor = asyncio.create_task(self._monitor_queues())
 
+    @property
+    def predictor_metrics_enabled(self) -> bool:
+        """Whether predictor metrics event generation is enabled.
+
+        Read live from user settings so toggling the flag (via
+        ``settings.update_setting`` or editing ``user_settings.json``) takes
+        effect without a restart. Defaults to enabled.
+        """
+        return bool(self.settings.user_config.get("enable_predictor_metrics", True))
+
     def _record_predictor_metric(self, event_type: str, payload: dict):
+        if not self.predictor_metrics_enabled:
+            return
         try:
             self.predictor_metrics.record_event(event_type, payload)
         except Exception as e:
@@ -474,20 +486,21 @@ class RecordingManager:
                     continue
 
                 recording.is_checking = True
-                self._predictor_dispatched_at[recording.rec_id] = {
-                    "at": datetime.now(),
-                    "likelihood": round(float(likelihood), 4),
-                }
-                self._record_predictor_metric(
-                    "check_dispatched",
-                    {
-                        "rec_id": recording.rec_id,
-                        "priority": prio_key,
+                if self.predictor_metrics_enabled:
+                    self._predictor_dispatched_at[recording.rec_id] = {
+                        "at": datetime.now(),
                         "likelihood": round(float(likelihood), 4),
-                        "loop_time_seconds": snap.adjusted_interval,
-                        "is_favorite": bool(getattr(recording, "is_favorite", False)),
-                    },
-                )
+                    }
+                    self._record_predictor_metric(
+                        "check_dispatched",
+                        {
+                            "rec_id": recording.rec_id,
+                            "priority": prio_key,
+                            "likelihood": round(float(likelihood), 4),
+                            "loop_time_seconds": snap.adjusted_interval,
+                            "is_favorite": bool(getattr(recording, "is_favorite", False)),
+                        },
+                    )
                 
                 # 5. Dispatch to priority-specific queue
                 if prio_key == "F":
@@ -762,20 +775,21 @@ class RecordingManager:
                     recording.last_duration = timedelta()
                     recording.status_info = RecordingStatus.LIVE_BROADCASTING
 
-                info = self._predictor_dispatched_at.pop(recording.rec_id, None)
-                self._record_predictor_metric(
-                    "check_result",
-                    {
-                        "rec_id": recording.rec_id,
-                        "is_live": True,
-                        "was_live": bool(was_live),
-                        "loop_time_seconds": recording.loop_time_seconds,
-                        "detection_latency_seconds": detection_latency_seconds,
-                        "dispatch_wait_seconds": _dispatch_seconds(info),
-                        "likelihood_at_dispatch": info.get("likelihood") if info else None,
-                    },
-                )
-                self._predictor_last_offline_result_at.pop(recording.rec_id, None)
+                if self.predictor_metrics_enabled:
+                    info = self._predictor_dispatched_at.pop(recording.rec_id, None)
+                    self._record_predictor_metric(
+                        "check_result",
+                        {
+                            "rec_id": recording.rec_id,
+                            "is_live": True,
+                            "was_live": bool(was_live),
+                            "loop_time_seconds": recording.loop_time_seconds,
+                            "detection_latency_seconds": detection_latency_seconds,
+                            "dispatch_wait_seconds": _dispatch_seconds(info),
+                            "likelihood_at_dispatch": info.get("likelihood") if info else None,
+                        },
+                    )
+                    self._predictor_last_offline_result_at.pop(recording.rec_id, None)
 
             else:
                 # Update counts for non-live case
@@ -801,19 +815,20 @@ class RecordingManager:
                         }
                     )
 
-                info = self._predictor_dispatched_at.pop(recording.rec_id, None)
-                self._record_predictor_metric(
-                    "check_result",
-                    {
-                        "rec_id": recording.rec_id,
-                        "is_live": False,
-                        "was_live": False,
-                        "loop_time_seconds": recording.loop_time_seconds,
-                        "dispatch_wait_seconds": _dispatch_seconds(info),
-                        "likelihood_at_dispatch": info.get("likelihood") if info else None,
-                    },
-                )
-                self._predictor_last_offline_result_at[recording.rec_id] = datetime.now()
+                if self.predictor_metrics_enabled:
+                    info = self._predictor_dispatched_at.pop(recording.rec_id, None)
+                    self._record_predictor_metric(
+                        "check_result",
+                        {
+                            "rec_id": recording.rec_id,
+                            "is_live": False,
+                            "was_live": False,
+                            "loop_time_seconds": recording.loop_time_seconds,
+                            "dispatch_wait_seconds": _dispatch_seconds(info),
+                            "likelihood_at_dispatch": info.get("likelihood") if info else None,
+                        },
+                    )
+                    self._predictor_last_offline_result_at[recording.rec_id] = datetime.now()
 
         finally:
             recording.is_checking = False
