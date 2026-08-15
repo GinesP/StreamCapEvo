@@ -16,6 +16,7 @@ from ..media import ffmpeg_builders
 from ..media.direct_downloader import DirectStreamDownloader
 from ..platforms import platform_handlers
 from ..platforms.platform_handlers import StreamData
+from ..platforms.platform_handlers.base import reset_status_check_context, set_status_check_context
 from ..runtime.process_manager import BackgroundService
 
 T = TypeVar("T")
@@ -212,9 +213,11 @@ class LiveStreamRecorder:
             account_type=self.account_config.get(self.platform_key, {}).get("account_type")
         )
         handler.begin_status_check()
+        token = set_status_check_context(self.recording.rec_id)
         try:
             return await handler.get_stream_info(self.live_url)
         finally:
+            reset_status_check_context(token)
             handler.end_status_check()
             self.recording.is_checking = False
 

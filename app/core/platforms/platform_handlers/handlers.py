@@ -75,10 +75,11 @@ class TikTokHandler(PlatformHandler):
 
     @trace_error_decorator
     async def get_stream_info(self, live_url: str) -> StreamData:
-        if not self.live_stream:
-            self.live_stream = streamget.TikTokLiveStream(proxy_addr=self.proxy, cookies=self.cookies)
-        json_data = await self.live_stream.fetch_web_stream_data(url=live_url)
-        stream_data = await self.live_stream.fetch_stream_url(json_data, self.record_quality)
+        # TikTok only: fresh stream object per check so concurrent status checks
+        # never share mutable state (observed httpx/_models.py allocation growth).
+        live_stream = streamget.TikTokLiveStream(proxy_addr=self.proxy, cookies=self.cookies)
+        json_data = await live_stream.fetch_web_stream_data(url=live_url)
+        stream_data = await live_stream.fetch_stream_url(json_data, self.record_quality)
 
         # Extraer avatar y cover si están disponibles
         try:
