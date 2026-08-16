@@ -18,7 +18,6 @@ logger.add(
 )
 
 logger.level("STREAM", no=22, color="<blue>")
-logger.level("STATUS", no=23, color="<cyan>")
 logger.level("RETRY", no=24, color="<magenta>")
 logger.add(
     f"{script_path}/logs/play_url.log",
