@@ -591,11 +591,19 @@ class RecordingManager:
                 if self.app.recording_enabled:
                     await self.check_all_live_status()
 
+        async def periodic_check_runner():
+            try:
+                await periodic_check()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Periodic live check task failed: {e}")
+
         if not RecordingManager.is_periodic_task_running():
             RecordingManager.set_periodic_task_running(True)
             self.periodic_task_started = True
             logger.info(f"Initializing periodic live check task with interval: {interval}s")
-            asyncio.create_task(periodic_check())
+            asyncio.create_task(periodic_check_runner())
         else:
             logger.info("Periodic live check task already running globally, skipping initialization")
 

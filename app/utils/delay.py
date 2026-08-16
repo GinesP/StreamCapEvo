@@ -1,4 +1,8 @@
 import asyncio
+import inspect
+
+from .logger import logger
+
 
 class DelayedTaskExecutor:
     def __init__(self, app, settings, delay=3):
@@ -21,7 +25,7 @@ class DelayedTaskExecutor:
         async def _timer_task():
             await asyncio.sleep(self.delay)
             try:
-                if asyncio.iscoroutinefunction(task):
+                if inspect.iscoroutinefunction(task):
                     await task(*args)
                 else:
                     task(*args)

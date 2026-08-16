@@ -8,9 +8,19 @@ event system that works with any UI framework (Flet, Qt, etc.).
 import asyncio
 import logging
 from collections import defaultdict
-from typing import Any, Callable
+from collections.abc import Callable
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_fire_and_forget_safely(coro, description: str):
+    """Run a fire-and-forget coroutine while consuming ordinary exceptions."""
+    try:
+        await coro
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.exception(f"EventBus: async task failed for {description}")
 
 
 class EventBus:
@@ -108,10 +118,10 @@ class EventBus:
                     self._schedule_async(callback, topic, *args, **kwargs)
                 else:
                     callback(topic, *args, **kwargs)
-            except Exception as e:
-                logger.error(
+            except Exception:
+                logger.exception(
                     f"EventBus: error in subscriber {callback.__qualname__} "
-                    f"for topic '{topic}': {e}"
+                    f"for topic '{topic}'"
                 )
 
     def _schedule_async(self, callback: Callable, topic: str, *args, **kwargs):
@@ -125,8 +135,12 @@ class EventBus:
             return
 
         if loop.is_running():
+            coro = _run_fire_and_forget_safely(
+                callback(topic, *args, **kwargs),
+                f"subscriber {callback.__qualname__} on topic '{topic}'",
+            )
             loop.call_soon_threadsafe(
-                asyncio.ensure_future, callback(topic, *args, **kwargs)
+                asyncio.ensure_future, coro
             )
         else:
             logger.warning(
@@ -156,16 +170,20 @@ class EventBus:
 
         try:
             if loop.is_running():
+                coro = _run_fire_and_forget_safely(
+                    coro_func(*args, **kwargs),
+                    f"task {coro_func.__qualname__}",
+                )
                 loop.call_soon_threadsafe(
-                    asyncio.ensure_future, coro_func(*args, **kwargs)
+                    asyncio.ensure_future, coro
                 )
             else:
                 logger.warning(
                     f"EventBus: event loop is not running, cannot run task "
                     f"{coro_func.__qualname__}"
                 )
-        except Exception as e:
-            logger.error(f"EventBus: error scheduling task {coro_func.__qualname__}: {e}")
+        except Exception:
+            logger.exception(f"EventBus: error scheduling task {coro_func.__qualname__}")
 
     # ── Debug helpers ────────────────────────────────────────────────
 
