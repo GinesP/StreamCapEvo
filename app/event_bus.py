@@ -6,6 +6,7 @@ event system that works with any UI framework (Flet, Qt, etc.).
 """
 
 import asyncio
+import inspect
 import logging
 from collections import defaultdict
 from collections.abc import Callable
@@ -114,7 +115,7 @@ class EventBus:
 
         for callback in subscribers:
             try:
-                if asyncio.iscoroutinefunction(callback):
+                if inspect.iscoroutinefunction(callback):
                     self._schedule_async(callback, topic, *args, **kwargs)
                 else:
                     callback(topic, *args, **kwargs)

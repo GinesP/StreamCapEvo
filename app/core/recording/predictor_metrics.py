@@ -4,14 +4,14 @@ import threading
 import time as _time
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ...utils.logger import logger
 
 
 def _utcnow() -> datetime:
-    return datetime.utcnow()
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _pct(values: list[float], p: int) -> float | None:

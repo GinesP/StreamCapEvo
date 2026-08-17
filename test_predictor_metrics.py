@@ -4,11 +4,26 @@ import sqlite3
 import tempfile
 import unittest
 from contextlib import redirect_stdout
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from app.core.recording.predictor_metrics import MetricsSummary, PredictorMetricsStore
+from app.core.recording.predictor_metrics import MetricsSummary, PredictorMetricsStore, _utcnow
 from scripts import predictor_metrics_report
+
+
+class UtcNowTests(unittest.TestCase):
+    def test_utcnow_returns_naive_utc_datetime(self):
+        result = _utcnow()
+        self.assertIsNone(result.tzinfo)
+        # Naive-UTC must match real UTC wall-clock within a small tolerance.
+        now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+        delta = abs((now_utc - result).total_seconds())
+        self.assertLess(delta, 5)
+
+    def test_utcnow_is_isoformat_serializable(self):
+        iso = _utcnow().isoformat()
+        self.assertIsInstance(iso, str)
+        self.assertIn("T", iso)
 
 
 class PredictorMetricsStoreTests(unittest.TestCase):
