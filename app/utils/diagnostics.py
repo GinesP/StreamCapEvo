@@ -116,6 +116,7 @@ def collect_report(
         "predictor_store": _predictor_store_report(predictor_store) if predictor_store else None,
         "asyncio": _asyncio_report(),
         "gc": _gc_report(),
+        "qt_objects": _qt_objects_report(),
     }
 
 
@@ -351,4 +352,69 @@ def _gc_report() -> dict:
         "gen0": g0,
         "gen1": g1,
         "gen2": g2,
+    }
+
+
+def _qt_objects_report() -> dict:
+    """Count live Qt objects by class to expose native-side retention.
+
+    ``gc.get_objects()`` only sees Python-side objects, but every C++-owned
+    ``QObject`` is wrapped by an owning Python ``shiboken`` wrapper, so any
+    object that is retained on the native side also holds its wrapper alive
+    and is visible here.  This is the complement to ``_tracemalloc_report``:
+    it catches Qt/C++ retention that tracemalloc cannot attribute (frames
+    don't include C++ allocations).  Parentless ``QObject`` instances are a
+    classic leak signal, as are objects stuck in ``deleteLater`` that never
+    get reaped by the event loop.
+    """
+    try:
+        from PySide6.QtCore import QObject, QTimer, QThread
+        from PySide6.QtWidgets import QWidget
+    except Exception as exc:  # pragma: no cover - Qt not importable
+        return {"available": False, "error": str(exc)}
+
+    counts = {
+        "QObject_total": 0,
+        "QWidget": 0,
+        "QTimer": 0,
+        "QThread": 0,
+        "parentless": 0,
+        "pending_delete": 0,
+    }
+    # Grouped by the module that defined each object's class, e.g.
+    # ``app.qt.views.recordings_view`` vs ``PySide6.QtWidgets``.  A module
+    # that grows across reports points squarely at which part of the code is
+    # creating objects that are being retained.
+    by_module: dict[str, int] = {}
+    try:
+        for obj in gc.get_objects():
+            # gc.get_objects() may yield non-QObject entries; isinstance is
+            # the cheap first filter before touching Qt-specific attributes.
+            if not isinstance(obj, QObject):
+                continue
+            counts["QObject_total"] += 1
+            if isinstance(obj, QWidget):
+                counts["QWidget"] += 1
+            if isinstance(obj, QTimer):
+                counts["QTimer"] += 1
+            if isinstance(obj, QThread):
+                counts["QThread"] += 1
+            try:
+                parent = obj.parent()
+            except RuntimeError:
+                parent = None  # wrapped C++ object already destroyed
+            if parent is None:
+                counts["parentless"] += 1
+            module = type(obj).__module__
+            by_module[module] = by_module.get(module, 0) + 1
+    except Exception as exc:  # pragma: no cover - defensive
+        return {"available": False, "error": str(exc)}
+
+    # Only surface modules worth attention: more than one live object, so
+    # the report stays compact and noise-free.
+    significant = {m: c for m, c in by_module.items() if c > 1}
+    return {
+        "available": True,
+        "counts": counts,
+        "by_module": dict(sorted(significant.items(), key=lambda item: item[1], reverse=True)),
     }
