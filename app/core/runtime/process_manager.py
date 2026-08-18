@@ -44,8 +44,24 @@ class BackgroundService:
         self._stop_event.set()
         self.is_running = False
 
+    def active_task_count(self) -> int:
+        """Number of background tasks queued or currently being executed."""
+        return self.tasks.unfinished_tasks
+
+    def is_worker_alive(self) -> bool:
+        return self.worker_thread is not None and self.worker_thread.is_alive()
+
+    def join(self, timeout: float | None = None) -> bool:
+        """Wait for the worker thread to finish; return True if it exited."""
+        if not self.is_worker_alive():
+            return True
+        self.worker_thread.join(timeout)
+        return not self.is_worker_alive()
+
     def _process_tasks(self):
-        while not self._stop_event.is_set():
+        # Keep processing until a stop was requested AND the queue is drained,
+        # so work enqueued during shutdown still completes before exiting.
+        while not self._stop_event.is_set() or not self.tasks.empty():
             try:
                 # Wait for a task with a timeout to allow checking stop_event
                 task_func, args, kwargs = self.tasks.get(timeout=1.0)
@@ -58,8 +74,6 @@ class BackgroundService:
                 finally:
                     self.tasks.task_done()
             except queue.Empty:
-                if self.tasks.empty() and not self.is_running:
-                    break
                 continue
         
         logger.info("Background service worker stopped")

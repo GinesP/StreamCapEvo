@@ -517,7 +517,16 @@ class MainWindow(QMainWindow):
         # Sleep briefly to ensure "stop" signals propagate and transcoding background tasks spawn
         await asyncio.sleep(2.0)
 
-        # Wait up to 30 seconds for active ffmpeg processes to clear
+        bg_service = None
+        try:
+            from app.core.runtime.process_manager import BackgroundService
+
+            bg_service = BackgroundService.get_instance()
+        except Exception:
+            pass
+
+        # Wait up to 60 seconds for active recordings, ffmpeg processes,
+        # background-service work and event-bus tasks to clear.
         for _ in range(60):
             active_processes = 0
             if hasattr(self.app, "process_manager") and self.app.process_manager:
@@ -528,29 +537,25 @@ class MainWindow(QMainWindow):
                 active_recorders = len(self.app.record_manager.active_recorders)
 
             bg_tasks = 0
-            try:
-                from app.core.runtime.process_manager import BackgroundService
+            if bg_service is not None:
+                bg_tasks = bg_service.active_task_count()
 
-                bg_tasks = BackgroundService.get_instance().tasks.unfinished_tasks
-            except Exception:
-                pass
+            pending_async = 0
+            if hasattr(self.app, "event_bus") and self.app.event_bus:
+                pending_async = self.app.event_bus.pending_task_count()
 
-            # Check for active asyncio tasks related to recording or transcoding
-            asyncio_tasks_active = 0
-            for task in asyncio.all_tasks():
-                coro = task.get_coro()
-                if coro and hasattr(coro, "__name__"):
-                    if coro.__name__ in ["start_ffmpeg", "converts_mp4", "_do_converts_mp4", "start_recording"]:
-                        asyncio_tasks_active += 1
-
-            if active_processes == 0 and active_recorders == 0 and bg_tasks == 0 and asyncio_tasks_active == 0:
+            if active_processes == 0 and active_recorders == 0 and bg_tasks == 0 and pending_async == 0:
                 logger.info("All background tasks and recordings finished. Safe to exit.")
                 break
 
             logger.info(
-                f"Waiting for shutdown... Recorders: {active_recorders}, FFMpeg: {active_processes}, BG_Tasks: {bg_tasks}, AsyncTasks: {asyncio_tasks_active}"
+                f"Waiting for shutdown... Recorders: {active_recorders}, FFMpeg: {active_processes}, "
+                f"BG_Tasks: {bg_tasks}, PendingAsync: {pending_async}"
             )
             await asyncio.sleep(1.0)
+
+        if bg_service is not None:
+            bg_service.stop()
 
         logger.info("Shutdown delay completed, quitting application.")
         from PySide6.QtWidgets import QApplication

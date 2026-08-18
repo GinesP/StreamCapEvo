@@ -52,6 +52,57 @@ class EventBusFireAndForgetTests(unittest.IsolatedAsyncioTestCase):
             await started.wait()
             await asyncio.sleep(0)
 
+    async def test_pending_task_count_tracks_inflight_tasks(self):
+        bus = EventBus()
+        bus.set_loop(asyncio.get_running_loop())
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def slow():
+            started.set()
+            await release.wait()
+
+        bus.run_task(slow)
+        await started.wait()
+        await asyncio.sleep(0)
+
+        self.assertEqual(bus.pending_task_count(), 1)
+
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        self.assertEqual(bus.pending_task_count(), 0)
+
+    async def test_wait_for_idle_returns_true_when_drained(self):
+        bus = EventBus()
+        bus.set_loop(asyncio.get_running_loop())
+
+        async def quick():
+            await asyncio.sleep(0)
+
+        bus.run_task(quick)
+        self.assertTrue(await bus.wait_for_idle(timeout=1.0))
+        self.assertEqual(bus.pending_task_count(), 0)
+
+    async def test_wait_for_idle_times_out_while_busy(self):
+        bus = EventBus()
+        bus.set_loop(asyncio.get_running_loop())
+        release = asyncio.Event()
+
+        async def slow():
+            await release.wait()
+
+        bus.run_task(slow)
+        await asyncio.sleep(0)
+
+        self.assertFalse(await bus.wait_for_idle(timeout=0.05))
+
+        release.set()
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+        await bus.wait_for_idle(timeout=1.0)
+
 
 class RecordingManagerPeriodicTaskTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):

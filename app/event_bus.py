@@ -38,6 +38,7 @@ class EventBus:
         self._subscribers: dict[str, list[Callable]] = defaultdict(list)
         self._loop: asyncio.AbstractEventLoop | None = None
         self._page = page  # Flet page for bridging if needed during transition
+        self._pending_tasks: set[asyncio.Task] = set()
 
     def set_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the asyncio event loop used for scheduling async callbacks."""
@@ -140,9 +141,7 @@ class EventBus:
                 callback(topic, *args, **kwargs),
                 f"subscriber {callback.__qualname__} on topic '{topic}'",
             )
-            loop.call_soon_threadsafe(
-                asyncio.ensure_future, coro
-            )
+            loop.call_soon_threadsafe(self._schedule_tracked_task, coro)
         else:
             logger.warning(
                 f"EventBus: event loop is not running, cannot schedule "
@@ -175,9 +174,7 @@ class EventBus:
                     coro_func(*args, **kwargs),
                     f"task {coro_func.__qualname__}",
                 )
-                loop.call_soon_threadsafe(
-                    asyncio.ensure_future, coro
-                )
+                loop.call_soon_threadsafe(self._schedule_tracked_task, coro)
             else:
                 logger.warning(
                     f"EventBus: event loop is not running, cannot run task "
@@ -185,6 +182,31 @@ class EventBus:
                 )
         except Exception:
             logger.exception(f"EventBus: error scheduling task {coro_func.__qualname__}")
+
+    # ── Fire-and-forget task tracking ───────────────────────────────
+
+    def _schedule_tracked_task(self, coro) -> None:
+        """Create a Task for *coro* and track it until it completes."""
+        task = asyncio.ensure_future(coro)
+        self._pending_tasks.add(task)
+        task.add_done_callback(self._pending_tasks.discard)
+
+    def pending_task_count(self) -> int:
+        """Number of fire-and-forget tasks currently in flight."""
+        return len(self._pending_tasks)
+
+    async def wait_for_idle(self, timeout: float = 10.0, interval: float = 0.2) -> bool:
+        """Wait until all fire-and-forget tasks finish or the timeout lapses.
+
+        Returns True when idle, False on timeout.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while self._pending_tasks:
+            if loop.time() >= deadline:
+                return False
+            await asyncio.sleep(interval)
+        return True
 
     # ── Debug helpers ────────────────────────────────────────────────
 

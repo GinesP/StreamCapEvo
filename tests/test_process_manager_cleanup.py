@@ -1,10 +1,11 @@
+# ruff: noqa: PT009, PT019  # unittest-style assertions are intentional here
+import threading
 import unittest
-from unittest.mock import mock_open
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, mock_open, patch
 
 from app.core.recording.stream_manager import LiveStreamRecorder
-from app.core.runtime.process_manager import AsyncProcessManager
+from app.core.runtime.process_manager import AsyncProcessManager, BackgroundService
 from app.models.recording.recording_status_model import RecordingStatus
 
 
@@ -17,6 +18,42 @@ class AsyncProcessManagerTests(unittest.TestCase):
         manager.remove_process(process)
 
         self.assertEqual(manager.ffmpeg_processes, [])
+
+
+class BackgroundServiceTests(unittest.TestCase):
+    def test_stop_drains_queued_tasks_before_exit(self):
+        svc = BackgroundService()
+        executed = []
+
+        def task_func():
+            executed.append("task")
+
+        svc.add_task(task_func)
+        svc.add_task(task_func)
+
+        svc.stop()
+        self.assertTrue(svc.join(timeout=5.0))
+
+        self.assertEqual(len(executed), 2)
+        self.assertEqual(svc.active_task_count(), 0)
+
+    def test_active_task_count_includes_inflight_work(self):
+        svc = BackgroundService()
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking():
+            started.set()
+            release.wait(5)
+
+        svc.add_task(blocking)
+        self.assertTrue(started.wait(5))
+        self.assertGreaterEqual(svc.active_task_count(), 1)
+
+        release.set()
+        svc.stop()
+        self.assertTrue(svc.join(timeout=5.0))
+        self.assertEqual(svc.active_task_count(), 0)
 
 
 class LiveStreamRecorderProcessCleanupTests(unittest.IsolatedAsyncioTestCase):
