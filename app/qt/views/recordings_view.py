@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.qt.components.recording_card import QtRecordingCard
-from app.qt.themes.theme import theme_manager
+from app.qt.themes.theme import QUEUE_COLORS, theme_manager
 from app.qt.utils.elevation import apply_elevation
 from app.qt.utils.filters import RecordingFilters
 from app.qt.utils.iconography import apply_button_icon, icon_pixmap
@@ -39,6 +39,88 @@ from app.utils.i18n import tr
 from app.utils.logger import logger
 
 _RECORDING_ROLE = Qt.ItemDataRole.UserRole + 1
+
+
+# Local queue-badge derivation — mirrors app.qt.components.recording_card
+# badge semantics (read-only, no Precog.snapshot). Kept self-contained so the
+# list delegate does not depend on the grid card's private helpers.
+_QUEUE_BADGE_COLORS = {
+    "F": QUEUE_COLORS["fast"],
+    "M": QUEUE_COLORS["medium"],
+    "S": QUEUE_COLORS["slow"],
+}
+
+
+def _interval_to_queue_key(interval_seconds: int | None) -> str:
+    """Map an interval in seconds to F/M/S (None falls back to M)."""
+    if interval_seconds is None:
+        return "M"
+    if interval_seconds <= 60:
+        return "F"
+    if interval_seconds <= 180:
+        return "M"
+    return "S"
+
+
+def _derive_queue_badge(rec) -> tuple[str, str]:
+    """Lazy, read-only queue badge (F/M/S) for the list delegate.
+
+    Prefers the predictor-computed ``_last_queue_key``; falls back to a light
+    derivation from ``loop_time_seconds`` using the current UI semantics.
+    Never calls ``Precog.snapshot()`` and introduces no cache.
+    """
+    key = getattr(rec, "_last_queue_key", None)
+    if key is None:
+        key = _interval_to_queue_key(getattr(rec, "loop_time_seconds", None))
+    return key, _QUEUE_BADGE_COLORS.get(key, "#9E9E9E")
+
+
+# Staleness badge — mirrors the "+30 días" status filter. Uses only the
+# lightweight dates already present on the recording (last_seen_live /
+# added_at); never calls Precog.snapshot() and introduces no cache.
+_STALE_BADGE_LABEL = "30D"
+_STALE_BADGE_COLOR = "#EF6C00"
+
+
+# Likelihood badge — mirrors the grid card's read-only likelihood badge.
+# Uses ONLY the already-persisted _last_likelihood; never calls
+# Precog.snapshot() and introduces no cache.
+_LIKELIHOOD_GOOD = "#4CAF50"
+_LIKELIHOOD_MID = "#FF9800"
+_LIKELIHOOD_LOW = "#F44336"
+
+
+def _derive_likelihood_badge(rec) -> tuple[str, str] | None:
+    """Lazy, read-only likelihood badge (%) for the list delegate.
+
+    Returns None when there is no score to show (mirrors the grid card omit
+    on zero rule). Operates purely on the persisted _last_likelihood (falling
+    back to priority_score) and introduces no cache or snapshot; it never
+    calls Precog.snapshot().
+    """
+    score = getattr(rec, "_last_likelihood", None)
+    if score is None:
+        score = getattr(rec, "priority_score", 0.0)
+    if not score or score <= 0:
+        return None
+    label = f"{score * 100:.0f}%" if score <= 1 else f"{score:.0f}%"
+    if score >= 0.5:
+        color = _LIKELIHOOD_GOOD
+    elif score >= 0.15:
+        color = _LIKELIHOOD_MID
+    else:
+        color = _LIKELIHOOD_LOW
+    return label, color
+
+
+def _derive_stale_badge(rec) -> bool:
+    """Lazy, read-only staleness badge (30D) for the list delegate.
+
+    Reuses ``RecordingStateLogic.is_stale`` so the badge matches the list
+    filter semantics exactly. Operates purely on existing recording dates and
+    introduces no new cache or snapshot.
+    """
+    return RecordingStateLogic.is_stale(rec)
 
 
 class RecordingListModel(QAbstractListModel):
@@ -173,7 +255,57 @@ class RecordingListDelegate(QStyledItemDelegate):
         letter = (rec.streamer_name or "?")[0].upper()
         painter.drawText(QRect(avatar_x, avatar_y, avatar_size, avatar_size), Qt.AlignmentFlag.AlignCenter, letter)
 
-        text_x = avatar_x + avatar_size + 16
+        queue_key, queue_color = _derive_queue_badge(rec)
+        badge_w = 18
+        badge_h = 16
+        badge_x = avatar_x + avatar_size + 4
+        badge_y = row.y() + (row.height() - badge_h) // 2
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(queue_color)))
+        painter.drawRoundedRect(badge_x, badge_y, badge_w, badge_h, 4, 4)
+        painter.setPen(QColor("#FFFFFF"))
+        painter.setFont(body_font(9, QFont.Weight.Bold))
+        painter.drawText(
+            QRect(badge_x, badge_y, badge_w, badge_h),
+            Qt.AlignmentFlag.AlignCenter,
+            queue_key,
+        )
+
+        next_x = badge_x + badge_w + 4
+
+        if _derive_stale_badge(rec):
+            stale_w = 30
+            stale_x = next_x
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(_STALE_BADGE_COLOR)))
+            painter.drawRoundedRect(stale_x, badge_y, stale_w, badge_h, 4, 4)
+            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(body_font(9, QFont.Weight.Bold))
+            painter.drawText(
+                QRect(stale_x, badge_y, stale_w, badge_h),
+                Qt.AlignmentFlag.AlignCenter,
+                _STALE_BADGE_LABEL,
+            )
+            next_x = stale_x + stale_w + 4
+
+        lik = _derive_likelihood_badge(rec)
+        if lik is not None:
+            lik_label, lik_color = lik
+            lik_w = 30
+            lik_x = next_x
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QBrush(QColor(lik_color)))
+            painter.drawRoundedRect(lik_x, badge_y, lik_w, badge_h, 4, 4)
+            painter.setPen(QColor("#FFFFFF"))
+            painter.setFont(body_font(9, QFont.Weight.Bold))
+            painter.drawText(
+                QRect(lik_x, badge_y, lik_w, badge_h),
+                Qt.AlignmentFlag.AlignCenter,
+                lik_label,
+            )
+            next_x = lik_x + lik_w + 8
+
+        text_x = next_x
         action_rects = self.action_rects(row, rec)
         action_left = min((rect.x() for _, _, rect in action_rects), default=row.right() - 34)
         name = rec.streamer_name or "Unknown"
