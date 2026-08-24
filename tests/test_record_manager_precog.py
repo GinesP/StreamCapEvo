@@ -201,8 +201,8 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
         self, mock_snapshot, mock_metrics
     ):
         """check_all_live_status does NOT store PrecogSnapshot on recording (memory regression fix).
-        Only lightweight fallback fields are persisted. The full snapshot is still
-        published via precog_snapshot_batch for dashboard consumers."""
+        Only lightweight fallback fields are persisted. The full snapshot is used
+        immediately for operational decisions but is no longer published."""
         mock_snap = MagicMock(spec=PrecogSnapshot)
         mock_snap.adjusted_interval = 60
         mock_snap.likelihood = 0.95
@@ -247,164 +247,19 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             # Lightweight fallback fields ARE persisted
             self.assertEqual(recording._last_queue_key, "F")
             self.assertEqual(recording._last_likelihood, 0.95)
-            # Full snapshot still published via event for dashboard consumers
-            app.event_bus.publish.assert_any_call(
-                "precog_snapshot_batch", {"rec-test": mock_snap}
-            )
-
-        asyncio.run(_run())
-
-
-    @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    @patch("app.core.recording.precog.Precog.snapshot")
-    def test_is_recording_branch_invalidates_last_snapshot(
-        self, mock_snapshot, mock_metrics
-    ):
-        """check_all_live_status invalidates _last_snapshot for is_recording recordings."""
-        mock_snap = MagicMock(spec=PrecogSnapshot)
-        mock_snap.adjusted_interval = 60
-        mock_snap.likelihood = 0.95
-        mock_snap.should_check = True
-        mock_snap.queue_key = "F"
-        mock_snapshot.return_value = mock_snap
-
-        async def _run():
-            app = MagicMock()
-            app.settings.user_config.get = _settings_get
-            app.config_manager.config_path = "/tmp"
-            app.config_manager.load_recordings_config.return_value = []
-            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
-            app.language_manager.add_observer = MagicMock()
-            app.event_bus.publish = MagicMock()
-            app.event_bus.run_task = MagicMock()
-
-            manager = RecordingManager(app)
-
-            for name in list(manager._pool_workers):
-                for task in manager._pool_workers[name]:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
-                manager._pool_workers[name] = []
-            manager._adaptive_monitor.cancel()
-            try:
-                await manager._adaptive_monitor
-            except (asyncio.CancelledError, RuntimeError):
-                pass
-
-            recording = _make_recording(monitor_status=True)
-            recording.is_recording = True
-            recording._last_snapshot = MagicMock()
-            GlobalRecordingState.recordings = [recording]
-
-            await manager.check_all_live_status()
-
-            self.assertIsNone(recording._last_snapshot)
-            mock_snapshot.assert_not_called()
-
-        asyncio.run(_run())
-
-    @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    def test_check_if_live_finally_preserves_last_snapshot(
-        self, mock_metrics
-    ):
-        """check_if_live finally block preserves _last_snapshot so the UI
-        can still display likelihood and is_stale badges from the predictor
-        cycle. The snapshot remains until the next intelligence cycle
-        overwrites it."""
-        async def _run():
-            app = MagicMock()
-            app.settings.user_config.get = _settings_get
-            app.config_manager.config_path = "/tmp"
-            app.config_manager.load_recordings_config.return_value = []
-            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
-            app.language_manager.add_observer = MagicMock()
-            app.event_bus.publish = MagicMock()
-            app.event_bus.run_task = MagicMock()
-
-            manager = RecordingManager(app)
-
-            for name in list(manager._pool_workers):
-                for task in manager._pool_workers[name]:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
-                manager._pool_workers[name] = []
-            manager._adaptive_monitor.cancel()
-            try:
-                await manager._adaptive_monitor
-            except (asyncio.CancelledError, RuntimeError):
-                pass
-
-            snapshot = MagicMock()
-            snapshot.likelihood = 0.85
-            snapshot.is_stale = False
-
-            recording = _make_recording(monitor_status=True)
-            recording.is_recording = True
-            recording.is_checking = True
-            recording._last_snapshot = snapshot
-            GlobalRecordingState.recordings = [recording]
-
-            await manager.check_if_live(recording)
-
-            # Snapshot preserved so UI can display likelihood/stale badges
-            self.assertIsNotNone(recording._last_snapshot)
-            self.assertIs(recording._last_snapshot, snapshot)
-            self.assertFalse(recording.is_checking)
-
-        asyncio.run(_run())
-
-    @patch("app.core.recording.record_manager.PredictorMetricsStore")
-    def test_stop_monitor_recording_clears_last_snapshot(
-        self, mock_metrics
-    ):
-        """stop_monitor_recording clears _last_snapshot."""
-        async def _run():
-            app = MagicMock()
-            app.settings.user_config.get = _settings_get
-            app.config_manager.config_path = "/tmp"
-            app.config_manager.load_recordings_config.return_value = []
-            app.language_manager.language = {"recording_manager": {}, "video_quality": {}}
-            app.language_manager.add_observer = MagicMock()
-            app.event_bus.publish = MagicMock()
-            app.event_bus.run_task = MagicMock()
-
-            manager = RecordingManager(app)
-
-            for name in list(manager._pool_workers):
-                for task in manager._pool_workers[name]:
-                    task.cancel()
-                    try:
-                        await task
-                    except (asyncio.CancelledError, RuntimeError):
-                        pass
-                manager._pool_workers[name] = []
-            manager._adaptive_monitor.cancel()
-            try:
-                await manager._adaptive_monitor
-            except (asyncio.CancelledError, RuntimeError):
-                pass
-
-            recording = _make_recording(monitor_status=True)
-            recording._last_snapshot = MagicMock()
-            GlobalRecordingState.recordings = [recording]
-
-            await manager.stop_monitor_recording(recording)
-
-            self.assertIsNone(recording._last_snapshot)
+            # Full snapshot is NOT published anywhere (dead code removed)
+            published_events = [
+                call.args[0] for call in app.event_bus.publish.call_args_list
+            ]
+            self.assertNotIn("precog_snapshot_batch", published_events)
 
         asyncio.run(_run())
 
 
     @patch("app.core.recording.record_manager.PredictorMetricsStore")
     def test_stop_monitor_preserves_fallback_values(self, mock_metrics):
-        """stop_monitor_recording clears _last_snapshot but preserves _last_queue_key
-        and _last_likelihood for UI fallback."""
+        """stop_monitor_recording preserves _last_queue_key and _last_likelihood
+        for UI fallback."""
         async def _run():
             app = MagicMock()
             app.settings.user_config.get = _settings_get
@@ -434,13 +289,11 @@ class RecordManagerPrecogConsumption(unittest.TestCase):
             recording = _make_recording(monitor_status=True)
             recording._last_queue_key = "S"
             recording._last_likelihood = 0.42
-            recording._last_snapshot = MagicMock()
             GlobalRecordingState.recordings = [recording]
 
             await manager.stop_monitor_recording(recording)
 
-            # _last_snapshot cleared but fallback values preserved
-            self.assertIsNone(recording._last_snapshot)
+            # Fallback values preserved for UI badge display
             self.assertEqual(recording._last_queue_key, "S")
             self.assertEqual(recording._last_likelihood, 0.42)
 

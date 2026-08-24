@@ -14,12 +14,12 @@ import unittest
 from unittest.mock import MagicMock
 
 from app.qt.themes.theme import QUEUE_COLORS
+from app.qt.utils.queue_badge import interval_to_queue_key
 from app.qt.views.recordings_view import (
     RecordingListDelegate,
     _derive_likelihood_badge,
     _derive_queue_badge,
     _derive_stale_badge,
-    _interval_to_queue_key,
 )
 
 
@@ -159,11 +159,11 @@ class LazyQueueBadgeTests(unittest.TestCase):
         assert color == QUEUE_COLORS["medium"]
 
     def test_interval_to_queue_key_semantics(self):
-        """Local derivation mirrors Precog.interval_to_queue_key semantics."""
-        assert _interval_to_queue_key(None) == "M"
-        assert _interval_to_queue_key(60) == "F"
-        assert _interval_to_queue_key(180) == "M"
-        assert _interval_to_queue_key(181) == "S"
+        """Shared helper mirrors Precog.interval_to_queue_key semantics."""
+        assert interval_to_queue_key(None) == "M"
+        assert interval_to_queue_key(60) == "F"
+        assert interval_to_queue_key(180) == "M"
+        assert interval_to_queue_key(181) == "S"
 
     def test_paint_is_snapshot_free(self):
         """paint must never call Precog.snapshot() (lazy/read-only only)."""

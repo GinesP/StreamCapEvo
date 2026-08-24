@@ -30,10 +30,11 @@ from PySide6.QtWidgets import (
 
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.qt.components.recording_card import QtRecordingCard
-from app.qt.themes.theme import QUEUE_COLORS, theme_manager
+from app.qt.themes.theme import theme_manager
 from app.qt.utils.elevation import apply_elevation
 from app.qt.utils.filters import RecordingFilters
 from app.qt.utils.iconography import apply_button_icon, icon_pixmap
+from app.qt.utils.queue_badge import QUEUE_BADGE_COLORS, interval_to_queue_key
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
 from app.utils.logger import logger
@@ -42,26 +43,9 @@ _RECORDING_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 # Local queue-badge derivation — mirrors app.qt.components.recording_card
-# badge semantics (read-only, no Precog.snapshot). Kept self-contained so the
-# list delegate does not depend on the grid card's private helpers.
-_QUEUE_BADGE_COLORS = {
-    "F": QUEUE_COLORS["fast"],
-    "M": QUEUE_COLORS["medium"],
-    "S": QUEUE_COLORS["slow"],
-}
-
-
-def _interval_to_queue_key(interval_seconds: int | None) -> str:
-    """Map an interval in seconds to F/M/S (None falls back to M)."""
-    if interval_seconds is None:
-        return "M"
-    if interval_seconds <= 60:
-        return "F"
-    if interval_seconds <= 180:
-        return "M"
-    return "S"
-
-
+# badge semantics (read-only, no Precog.snapshot). Uses the shared
+# app.qt.utils.queue_badge helper for the F/M/S rule so the list delegate and
+# the grid card never diverge.
 def _derive_queue_badge(rec) -> tuple[str, str]:
     """Lazy, read-only queue badge (F/M/S) for the list delegate.
 
@@ -71,8 +55,8 @@ def _derive_queue_badge(rec) -> tuple[str, str]:
     """
     key = getattr(rec, "_last_queue_key", None)
     if key is None:
-        key = _interval_to_queue_key(getattr(rec, "loop_time_seconds", None))
-    return key, _QUEUE_BADGE_COLORS.get(key, "#9E9E9E")
+        key = interval_to_queue_key(getattr(rec, "loop_time_seconds", None))
+    return key, QUEUE_BADGE_COLORS.get(key, "#9E9E9E")
 
 
 # Staleness badge — mirrors the "+30 días" status filter. Uses only the

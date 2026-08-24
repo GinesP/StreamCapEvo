@@ -43,8 +43,9 @@ from PySide6.QtWidgets import (
 
 from app.core.recording.recording_state_logic import RecordingStateLogic
 from app.models.recording.recording_status_model import CardStateType
-from app.qt.themes.theme import QUEUE_COLORS, theme_manager
+from app.qt.themes.theme import theme_manager
 from app.qt.utils.iconography import apply_button_icon
+from app.qt.utils.queue_badge import QUEUE_BADGE_COLORS, interval_to_queue_key
 from app.qt.utils.typography import body_font
 from app.utils.i18n import tr
 from app.utils.logger import logger
@@ -61,20 +62,9 @@ _STATUS_COLOR: dict[CardStateType, str] = {
     CardStateType.CHECKING:  "#2196F3",
 }
 
-_QUEUE_BADGE_COLORS: dict[str, str] = {
-    "F": QUEUE_COLORS["fast"],
-    "M": QUEUE_COLORS["medium"],
-    "S": QUEUE_COLORS["slow"],
-}
-
-# Local queue-key conversion — avoids importing Precog in the UI layer.
-# Mirrors Precog.interval_to_queue_key logic exactly.
-def _interval_to_queue_key(interval_seconds: int) -> str:
-    if interval_seconds <= 60:
-        return "F"
-    if interval_seconds <= 180:
-        return "M"
-    return "S"
+# Queue-key conversion and badge colours are provided by app.qt.utils.queue_badge
+# (interval_to_queue_key / QUEUE_BADGE_COLORS) — avoids importing Precog in the
+# UI layer and keeps the F/M/S rule in one place.
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -372,7 +362,7 @@ class QtRecordingCard(QFrame):
     # ─────────────────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _fill_badges(rec, layout: QHBoxLayout, card_instance: "QtRecordingCard", prefix: str) -> None:
+    def _fill_badges(rec, layout: QHBoxLayout, card_instance: QtRecordingCard, prefix: str) -> None:
         """
         Populate *layout* with prediction badge widgets using ONLY lightweight
         fields already persisted on *rec* by the predictor cycle.
@@ -385,8 +375,8 @@ class QtRecordingCard(QFrame):
         if q_t is None:
             # Fallback: derive from the configured loop interval without Precog
             base = getattr(rec, "loop_time_seconds", None)
-            q_t = _interval_to_queue_key(base) if base is not None else "M"
-        q_c = _QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
+            q_t = interval_to_queue_key(base)
+        q_c = QUEUE_BADGE_COLORS.get(q_t, "#9E9E9E")
 
         score = getattr(rec, "_last_likelihood", None)
         if score is None:

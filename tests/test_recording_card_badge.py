@@ -12,6 +12,7 @@ by the predictor cycle (no Precog.snapshot(), no _last_snapshot), we verify:
 """
 
 import unittest
+from datetime import datetime, timedelta
 from unittest.mock import MagicMock, PropertyMock, patch
 
 
@@ -168,9 +169,12 @@ class FillBadgesLogicTests(unittest.TestCase):
         """No 30D badge for streams seen recently."""
         import app.qt.components.recording_card as mod
 
+        recent_last_seen = (datetime.now() - timedelta(days=7)).date().isoformat()
+        recent_added_at = (datetime.now() - timedelta(days=20)).date().isoformat()
+
         rec = self._make_rec(
             queue_key="F", likelihood=0.8, priority=0.5,
-            loop_time=60, last_seen="2026-06-15", added_at="2026-01-01",
+            loop_time=60, last_seen=recent_last_seen, added_at=recent_added_at,
         )
         layout = self._make_layout()
         card = MagicMock()
@@ -202,11 +206,11 @@ class FillBadgesLogicTests(unittest.TestCase):
 
 
 class QueueKeyMappingTests(unittest.TestCase):
-    """_interval_to_queue_key mapping (no Qt needed)."""
+    """interval_to_queue_key mapping (no Qt needed)."""
 
     def test_interval_to_queue_key_mapping(self):
         """Verify F → F, M → M, S → S mapping."""
-        import app.qt.components.recording_card as mod
+        import app.qt.utils.queue_badge as mod
 
         cases = [
             (30, "F"),     # ≤60 → Fast
@@ -217,17 +221,17 @@ class QueueKeyMappingTests(unittest.TestCase):
             (600, "S"),    # >180 → Slow
         ]
         for interval, expected in cases:
-            result = mod._interval_to_queue_key(interval)
+            result = mod.interval_to_queue_key(interval)
             self.assertEqual(result, expected,
                              f"interval={interval}s → expected {expected}, got {result}")
 
     def test_queue_key_does_not_collapse_everything_to_M(self):
         """Explicit check that F, M, S all produce distinct keys."""
-        import app.qt.components.recording_card as mod
+        import app.qt.utils.queue_badge as mod
 
-        f_key = mod._interval_to_queue_key(30)
-        m_key = mod._interval_to_queue_key(120)
-        s_key = mod._interval_to_queue_key(300)
+        f_key = mod.interval_to_queue_key(30)
+        m_key = mod.interval_to_queue_key(120)
+        s_key = mod.interval_to_queue_key(300)
 
         self.assertEqual(f_key, "F")
         self.assertEqual(m_key, "M")
@@ -238,19 +242,19 @@ class QueueKeyMappingTests(unittest.TestCase):
 
 
 class QueueColorMappingTests(unittest.TestCase):
-    """_QUEUE_BADGE_COLORS (no Qt needed)."""
+    """QUEUE_BADGE_COLORS (no Qt needed)."""
 
     def test_all_queue_keys_have_colors(self):
         """F, M, S all have mapped colors."""
-        import app.qt.components.recording_card as mod
+        import app.qt.utils.queue_badge as mod
         for key in ("F", "M", "S"):
-            self.assertIn(key, mod._QUEUE_BADGE_COLORS,
+            self.assertIn(key, mod.QUEUE_BADGE_COLORS,
                           f"Queue key {key} must have a color mapping")
 
     def test_unknown_key_returns_fallback(self):
         """Unknown queue key uses fallback color."""
-        import app.qt.components.recording_card as mod
-        fallback = mod._QUEUE_BADGE_COLORS.get("X", "#9E9E9E")
+        import app.qt.utils.queue_badge as mod
+        fallback = mod.QUEUE_BADGE_COLORS.get("X", "#9E9E9E")
         self.assertEqual(fallback, "#9E9E9E",
                          "Unknown queue key should get fallback color")
 

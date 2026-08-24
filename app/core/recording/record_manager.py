@@ -352,7 +352,6 @@ class RecordingManager:
             # If it's recording, stop it first
             self.stop_recording(recording, manually_stopped=True)
             self._clear_recording_bookkeeping(recording.rec_id)
-            recording._last_snapshot = None
 
             # Now update to stopped monitoring state
             monitor_stopped_label = self._.get('monitor_stopped', 'Stopped monitoring')
@@ -443,14 +442,12 @@ class RecordingManager:
         busy_medium = 0
         busy_slow = 0
         skipping_count = 0
-        
-        _precog_snapshots = {}
+
         for recording in recordings_to_check:
             if not recording.monitor_status:
                 continue
 
             if recording.is_recording:
-                recording._last_snapshot = None
                 # Still live, so update historical patterns!
                 alpha_active = float(self.settings.user_config.get("ema_alpha_active", 0.1))
                 alpha_offline = float(self.settings.user_config.get("ema_alpha_offline", 0.01))
@@ -469,7 +466,6 @@ class RecordingManager:
             # forecast_details and time_state.
             recording._last_queue_key = snap.queue_key
             recording._last_likelihood = snap.likelihood
-            _precog_snapshots[recording.rec_id] = snap
             likelihood = snap.likelihood
 
             if snap.should_check:
@@ -554,10 +550,6 @@ class RecordingManager:
             "total_disp":  dispatched_fast + dispatched_medium + dispatched_slow,
             "total_busy":  busy_fast + busy_medium + busy_slow,
         })
-
-        # Publish snapshot data so UI consumers can update without recomputing Precog
-        if _precog_snapshots:
-            self.app.event_bus.publish("precog_snapshot_batch", _precog_snapshots)
 
         # Persist all recording updates once after all checks are queued
         await self.persist_recordings()
